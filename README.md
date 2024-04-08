@@ -5,7 +5,10 @@ Repository for Reinforcement Learning codes to simulate reservoir operations
 
 **Data**
 
-
-**Python Contents**
+**Codes**
 
 **Results**
+
+**Deliverable Model**
+
+# Usage
