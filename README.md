@@ -5,14 +5,12 @@ Repository for Reinforcement Learning codes to simulate reservoir operations
 
 # Models
 
-# Table of contents
+# Data
 
-**Data**
+# Codes
 
-**Codes**
+# Results
 
-**Results**
-
-**Deliverable Model**
+# Deliverable Model
 
 # Usage
