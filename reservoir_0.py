@@ -8,6 +8,7 @@ import os
 import io
 import time
 import numpy as np
+import torch as th
 import gymnasium
 from gymnasium import Env
 from gymnasium.spaces import Box, Discrete
