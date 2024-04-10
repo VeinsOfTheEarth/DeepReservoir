@@ -1,5 +1,5 @@
 # Reservoir
-Repository for Reinforcement Learning codes to simulate reservoir operations
+Repository for Reinforcement Learning (RL) mcodes to simulate reservoir operations
 
 # Packages Used
 
