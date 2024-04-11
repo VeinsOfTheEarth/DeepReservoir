@@ -2,6 +2,8 @@
 Repository for Reinforcement Learning (RL) codes to simulate reservoir operations
 
 # Packages Used
+**OpenAI Gymnasisum**
+**stable-baselines3**
 
 # Models
 
