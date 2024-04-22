@@ -75,14 +75,15 @@ class reservoir(Env):
         self.data=data_train
         self.random=random
         self.data_idx=random.randint(0, len(self.data)-1)
-        self.observation_space=Box(low=np.array([-lm,-lm,-lm,-lm,-lm]),high=np.array([lm,lm,lm,lm,lm]),dtype=np.float64)
+        self.observation_space=Box(low=np.array([-lm,-lm,-lm,-lm,-lm,-lm]),high=np.array([lm,lm,lm,lm,lm,lm]),dtype=np.float64)
         self.action_space=Box(low=0.5,high=1.5,dtype=np.float64)
+        self.elevation=self.data[self.data_idx,0]
         self.storage=self.data[self.data_idx,1]
         self.inflow=self.data[self.data_idx,3]
         self.outflow=self.data[self.data_idx,5]
         self.evaporation=self.data[self.data_idx,2]
         self.height=(self.storage+(self.inflow-self.outflow)*self.time-self.evaporation)/self.area
-        self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height])
+        self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height,self.elevation])
         self.episode_length=100
         self.maximum_height=20
         self.navajo_minstorage=100
@@ -96,12 +97,13 @@ class reservoir(Env):
         - state (numpy array of floating point numbers): The initial state values.
         """
         self.data_idx=random.randint(0, len(self.data)-1)
+        self.elevation=self.data[self.data_idx,0]
         self.storage=self.data[self.data_idx,1]
         self.inflow=self.data[self.data_idx,3]
         self.outflow=self.data[self.data_idx,5]
         self.evaporation=self.data[self.data_idx,2]
         self.height=(self.storage+(self.inflow-self.outflow)*self.time-self.evaporation)/self.area
-        self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height])
+        self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height,self.elevation])
         self.episode_length=100
         info={}
         return self.state,info
@@ -126,7 +128,14 @@ class reservoir(Env):
             self.data[self.data_idx,1]=self.navajo_minstorage-self.data[self.data_idx-1,1]
         
         # Rule: Priority-2
-        if 
+        # if self.data[self.data_idx,0]<5985.0:
+        #     pass
+        
+        # Rule: Priority-3
+        
+        # Rule: Priority-4
+        
+        
         self.state[2]=self.state[2]*action
         self.state[4]=(self.state[0]+(self.state[1]-self.state[2])*self.time-self.state[3])/self.area
         self.episode_length-=1
@@ -175,7 +184,7 @@ for episode in range(1,episodes+1):
 log_path=os.path.join('runs_navajo')
 # env=Monitor(env, log_path)
 agent=PPO('MlpPolicy',env,verbose=1,tensorboard_log=log_path)
-agent.learn(total_timesteps=20000)
+agent.learn(total_timesteps=10000)
 
 #%%
 agent_path=os.path.join('runs_navajo', 'PPO')
