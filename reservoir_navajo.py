@@ -84,7 +84,9 @@ class reservoir(Env):
         self.height=(self.storage+(self.inflow-self.outflow)*self.time-self.evaporation)/self.area
         self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height])
         self.episode_length=100
-        self.maximum_height=20.5
+        self.maximum_height=20
+        self.navajo_minstorage=100
+        self.navajo_flood_ctrl_storage_limit=0.0
         
     def reset(self, seed=None)->float:
         """
@@ -116,9 +118,15 @@ class reservoir(Env):
         - reward (int): The reward returned by the enviornment.
         - done (bool): Flag indicating whether the episode is completed.
         - truncated (bool): Flag indicating whether the episode was truncated due to a
-          reason not defined as the part of the MDP.
+          reason not defined as part of the MDP.
         - info (dict): Auxiliary information.
         """
+        # Rule: Priority-1
+        if self.data[self.data_idx-1,1]<self.navajo_minstorage:
+            self.data[self.data_idx,1]=self.navajo_minstorage-self.data[self.data_idx-1,1]
+        
+        # Rule: Priority-2
+        if 
         self.state[2]=self.state[2]*action
         self.state[4]=(self.state[0]+(self.state[1]-self.state[2])*self.time-self.state[3])/self.area
         self.episode_length-=1
