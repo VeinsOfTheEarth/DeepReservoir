@@ -50,7 +50,7 @@ class reservoir(Env):
 
     Methods:
     - __init__(): Initializes the environment states.
-    - reset(): Resets the enviornment to the initial states and returns the corresponding observations.
+    - reset(): Resets the enviornment to the initial states and returns the corresponding state values.
     - step(): Takes an action in the environment and returns the next state, reward, done flag, truncated flag, auxiliary info.
     - render(): Used to visualize the agnet-environment interaction.
     - seed(): Sets the seed value.
@@ -87,6 +87,12 @@ class reservoir(Env):
         self.maximum_height=20.5
         
     def reset(self, seed=None)->float:
+        """
+        Resets the enviornment to the initial states and returns the corresponding state values.
+
+        Returns:
+        - state (numpy array of floating point numbers): The initial state values.
+        """
         self.data_idx=random.randint(0, len(self.data)-1)
         self.storage=self.data[self.data_idx,1]
         self.inflow=self.data[self.data_idx,3]
@@ -100,17 +106,17 @@ class reservoir(Env):
     
     def step(self,action):
         """
-        Takes an action and returns the next observation, reward, done flag, truncated flag and additional auxiliary info.
+        Takes an action in the environment and returns the next state, reward, done flag, truncated flag, and auxiliary info.
 
         Parameters:
         - action (float): The action taken by the agent.
 
         Returns:
-        - state (float): The next observation.
-        - reward (int): The reward obtained based on the action.
-        - done (bool): Flag indicating whether the episode is done.
-        - truncated (bool): Flag indicating whether the episode was truncated due to a time limit
-          or a reason not defined as the part of the MDP.
+        - state (numpy array of floating point numbers): The next state of the environment.
+        - reward (int): The reward returned by the enviornment.
+        - done (bool): Flag indicating whether the episode is completed.
+        - truncated (bool): Flag indicating whether the episode was truncated due to a
+          reason not defined as the part of the MDP.
         - info (dict): Auxiliary information.
         """
         self.state[2]=self.state[2]*action
@@ -128,8 +134,6 @@ class reservoir(Env):
         truncated=False
         info={}
         return self.state,reward,done,truncated,info
-        
-        pass
     
     def render(self)->None:
         pass
