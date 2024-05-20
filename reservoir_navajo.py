@@ -43,7 +43,7 @@ data_train=data_train[0:22500,0:6]
 class reservoir(Env):
     """
     Observation Space:
-    - Continuous Box space with shape (1, 5) and dtype float64. Represents the states of the reservoir.   
+    - Continuous Box space with shape (1, 6) and dtype float64. Represents the states of the reservoir.   
     
     Action Space:
     - Box space with continuous actions in the range [0,1]. Represents the percentage of valve opening to control outflow.
@@ -76,7 +76,7 @@ class reservoir(Env):
         self.random=random
         self.data_idx=random.randint(0, len(self.data)-1)
         self.observation_space=Box(low=np.array([-lm,-lm,-lm,-lm,-lm,-lm]),high=np.array([lm,lm,lm,lm,lm,lm]),dtype=np.float64)
-        self.action_space=Box(low=0.5,high=1.5,dtype=np.float64)
+        self.action_space=Box(low=0.5,high=1.0,dtype=np.float64)
         self.elevation=self.data[self.data_idx,0]
         self.storage=self.data[self.data_idx,1]
         self.inflow=self.data[self.data_idx,3]
@@ -84,10 +84,21 @@ class reservoir(Env):
         self.evaporation=self.data[self.data_idx,2]
         self.height=(self.storage+(self.inflow-self.outflow)*self.time-self.evaporation)/self.area
         self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height,self.elevation])
-        self.episode_length=100
+        self.episode_length=20
         self.maximum_height=20
-        self.navajo_minstorage=100
+        self.navajo_reservoir_release=0.0
+        self.navajo_min_release=250
+        self.navajo_max_release=5000
+        self.navajo_min_elevation=5990
+        self.navajo_min_storage=100.0
+        self.navajo_max_storage=1647940.0
         self.navajo_flood_ctrl_storage_limit=0.0
+        self.navajo_min_niip_storage=100.0
+        self.niip_diversion =0.0
+        self.navajo_data_known_release_pattern=np.float64('NaN')
+        self.max_release_function_safety_factor=0.71
+        self.eowyst_elevation=6063.0
+        
         
     def reset(self, seed=None)->float:
         """
@@ -104,7 +115,7 @@ class reservoir(Env):
         self.evaporation=self.data[self.data_idx,2]
         self.height=(self.storage+(self.inflow-self.outflow)*self.time-self.evaporation)/self.area
         self.state =np.array([self.storage,self.inflow,self.outflow,self.evaporation,self.height,self.elevation])
-        self.episode_length=100
+        self.episode_length=20
         info={}
         return self.state,info
     
@@ -124,16 +135,53 @@ class reservoir(Env):
         - info (dict): Auxiliary information.
         """
         # Rule: Priority-1
-        if self.data[self.data_idx-1,1]<self.navajo_minstorage:
-            self.data[self.data_idx,1]=self.navajo_minstorage-self.data[self.data_idx-1,1]
+        if self.data[self.data_idx-1,1]<self.navajo_min_niip_storage:
+            self.data[self.data_idx,1]+=self.navajo_min_niip_storage-self.data[self.data_idx-1,1]
         
         # Rule: Priority-2
-        # if self.data[self.data_idx,0]<5985.0:
-        #     pass
+        if self.data[self.data_idx,0]<5985.0:
+            self.niip_diversion=0.0
         
         # Rule: Priority-3
+        if self.navajo_data_known_release_pattern != np.float64('NaN'):
+            self.navajo_reservoir_release = self.navajo_data_known_release_pattern
         
         # Rule: Priority-4
+        if self.data[self.data_idx-1,1]> self.navajo_flood_ctrl_storage_limit:
+            self.navajo_reservoir_release=min((self.data[self.data_idx-1,1]-self.navajo_flood_ctrl_storage_limit
+                                              +self.navajo_reservoir_release),self.max_release_function_safety_factor)
+            
+        # Rule: priority-5
+        if (self.data[self.data_idx-1,1]/self.navajo_max_storage)<0.95:
+            self.navajo_flood_ctrl_storage_limit=self.navajo_max_storage
+        
+        # Rule: priority-6
+        # Some issues need to be addressed
+        # Flow data below Farmington is not available
+        if max((max(self.data[self.data_idx-1,3],self.data[self.data_idx-1,5]),
+                max(self.data[self.data_idx-1,5],self.data[self.data_idx-1,1])))>12000:
+            self.navajo_reservoir_release=self.navajo_reservoir_release-max((max(max(self.data[self.data_idx-1,3],self.data[self.data_idx-1,5]),
+                                                                                  max(self.data[self.data_idx-1,5],self.data[self.data_idx-1,5]))-12000),0)
+    
+        # Rule: priority-7
+        # DROA -Drought Response Operations Agreement
+        
+        
+        # Rule: priority-8
+        
+        # Rule: priority-9
+        
+        # Rule: priority-10
+        
+        # Rule: priority-11
+        
+        # Rule: priority-12
+        
+        # Rule: priority-13
+        
+        # Rule: priority-14
+        
+        # Rule: priority-15
         
         
         self.state[2]=self.state[2]*action
@@ -143,7 +191,7 @@ class reservoir(Env):
         if self.state[4]<=self.maximum_height:
             reward=1
         elif self.state[4]>self.maximum_height:
-            reward=-2
+            reward=-1
         if self.episode_length<=0:
             done=True
         else:
@@ -187,11 +235,13 @@ agent=PPO('MlpPolicy',env,verbose=1,tensorboard_log=log_path)
 agent.learn(total_timesteps=10000)
 
 #%%
-agent_path=os.path.join('runs_navajo', 'PPO')
-agent.save(agent_path)
-del agent
-agent=PPO.load(agent_path,env=env)
-evaluate_policy(agent,env,n_eval_episodes=10,render=False)
+# =============================================================================
+# agent_path=os.path.join('runs_navajo', 'PPO')
+# agent.save(agent_path)
+# del agent
+# agent=PPO.load(agent_path,env=env)
+# evaluate_policy(agent,env,n_eval_episodes=10,render=False)
+# =============================================================================
 
 #%%
 # plot_results([log_path], 1e5, results_plotter.X_TIMESTEPS, "reservoir")  
