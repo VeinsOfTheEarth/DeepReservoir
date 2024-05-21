@@ -100,6 +100,7 @@ class reservoir(Env):
         self.eowyst_elevation=6063.0
         self.navajo_droa_water=0.0
         self.navajo_spike_release=5000.0
+        self.navajo_jan_lease=20000.0
         
         
     def reset(self, seed=None)->float:
@@ -182,9 +183,12 @@ class reservoir(Env):
             self.navajo_spike_release=0.0
             
         # Rule: priority-10
-        
+        # Jicarilla Apache Nation lease rule
+        self.navajo_reservoir_release=min(max(self.navajo_reservoir_release+self.navajo_jan_lease,self.navajo_reservoir_release),
+                                          self.max_release_function_safety_factor) 
         
         # Rule: priority-11
+        
         
         # Rule: priority-12
         
