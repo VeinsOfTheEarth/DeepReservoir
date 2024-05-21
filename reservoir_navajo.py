@@ -98,6 +98,8 @@ class reservoir(Env):
         self.navajo_data_known_release_pattern=np.float64('NaN')
         self.max_release_function_safety_factor=0.71
         self.eowyst_elevation=6063.0
+        self.navajo_droa_water=0.0
+        self.navajo_spike_release=5000.0
         
         
     def reset(self, seed=None)->float:
@@ -165,13 +167,22 @@ class reservoir(Env):
     
         # Rule: priority-7
         # DROA -Drought Response Operations Agreement
-        
+        # DROA release is zero for the year 2022 & 2023, for 2024 specific value not available till date
+        self.navajo_reservoir_release=min(max(self.navajo_reservoir_release+self.navajo_droa_water,self.navajo_reservoir_release),
+                                          self.max_release_function_safety_factor)
         
         # Rule: priority-8
+        self.navajo_reservoir_release=min(max(self.navajo_reservoir_release,self.navajo_spike_release),self.max_release_function_safety_factor)
         
         # Rule: priority-9
-        
+        # Temporary rule and might get updated as per the RiverWare documentation
+        if self.data[self.data_idx,1]>1386812.0:
+            self.navajo_spike_release=min((self.data[self.data_idx,1]-1386812.0),self.max_release_function_safety_factor)
+        else:
+            self.navajo_spike_release=0.0
+            
         # Rule: priority-10
+        
         
         # Rule: priority-11
         
