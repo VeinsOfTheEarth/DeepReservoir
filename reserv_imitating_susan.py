@@ -166,11 +166,11 @@ env = DummyVecEnv([lambda: env])
 # Instantiate the agent
 # Custom policy network
 policy_kwargs = dict(
-    net_arch=[dict(pi=[256, 256, 256], vf=[256, 256, 256])]
+    net_arch=[dict(pi=[64, 64, 64], vf=[64, 64, 64])]
 )
 
 # Instantiate the agent with custom policy and hyperparameters
-agent = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, learning_rate=0.001, n_steps=2048, batch_size=64, n_epochs=10)
+agent = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, learning_rate=0.0001, n_steps=2048, batch_size=64, n_epochs=10)
 
 # Train the agent
 agent.learn(total_timesteps=200000)
