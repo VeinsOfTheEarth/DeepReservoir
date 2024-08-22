@@ -23,9 +23,9 @@ from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 
 # Define the environment
-class ReservoirEnv(Env):
+class Reservoir(Env):
     def __init__(self, data, scaler, target_scaler):
-        super(ReservoirEnv, self).__init__()
+        super(Reservoir, self).__init__()
 
         self.data = data
         self.scaler = scaler
@@ -105,7 +105,7 @@ target_scaled = target_scaler.fit_transform(target)
 scaled_data = np.column_stack((features_scaled, target_scaled))
 
 # Create the environment
-env = ReservoirEnv(scaled_data, scaler, target_scaler)
+env = Reservoir(scaled_data, scaler, target_scaler)
 env = DummyVecEnv([lambda: env])
 
 # Instantiate the agent
@@ -115,21 +115,21 @@ policy_kwargs = dict(
 )
 
 # Instantiate the agent with custom policy and hyperparameters
-model = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, learning_rate=0.001, n_steps=2048, batch_size=64, n_epochs=10)
+agent = PPO("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs, learning_rate=0.001, n_steps=2048, batch_size=64, n_epochs=10)
 
 # Train the agent
-model.learn(total_timesteps=200000)
+agent.learn(total_timesteps=200000)
 
 # Save the trained model
-model.save("reservoir_agent")
+agent.save("reserv_agent")
 
 # Load the trained model
-model = PPO.load("reservoir_agent")
+agent = PPO.load("reserv_agent")
 
 # Test the trained agent
 obs = env.reset()
 for i in range(len(scaled_data)):
-    action, _states = model.predict(obs)
+    action, _states = agent.predict(obs)
     obs, rewards, done, info = env.step(action)
     if done:
         break
@@ -142,7 +142,7 @@ scaled_predicted_releases = []
 # Test the trained agent and collect scaled predictions
 for i in range(len(features_scaled)):
     # Predict the action (release) for the current observation
-    action, _states = model.predict(features_scaled[i])
+    action, _states = agent.predict(features_scaled[i])
 
     # The action is already scaled between 0 and 1, so we can directly use it
     release_predicted_scaled = action[0]
@@ -159,7 +159,7 @@ plt.figure(figsize=(14, 7))
 plt.plot(scaled_actual_releases, label='Actual Total Release (cfs)', color='blue')
 plt.plot(scaled_predicted_releases, label='Predicted Total Release (cfs)', color='red')
 plt.xlabel('Time Step')
-plt.ylabel('Scaled Total Release (cfs)')
+plt.ylabel('Total Release (cfs)')
 plt.title('Agent Predicted Releases vs Actual Releases')
 plt.legend()
 plt.show()
