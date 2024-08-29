@@ -1,8 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Aug 28 20:06:41 2024
+@Shubhendu
 
-@author: Shubhendu
+Code to simulate Navajo reservoir control using PPO algorithm. This code creates an AI agent to imitate the reservoir operator.
+
+Dependencies:
+- time
+- numpy
+- pandas
+- gymnasium
+- stable-baselines3
+- tensorflow
+- pytorch
+
+Note: Please install the required libraries before executing the code.
 """
 import os
 import io
@@ -24,9 +35,26 @@ from stable_baselines3.common import results_plotter
 from stable_baselines3.common.results_plotter import load_results, plot_results,ts2xy
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
 
 # Define the advanced environment with a custom reward function
 class ReservoirEnv(Env):
+    """
+    Observation Space:
+    - Continuous Box space with shape (4, ) and dtype float64. Represents the states of the reservoir.   
+    
+    Action Space:
+    - Box space with continuous actions in the range [0,1]. Represents the amount of water released.
+
+    Methods:
+    - __init__(): Initializes the environment states.
+    - reset(): Resets the enviornment to the initial states and returns the corresponding state values.
+    - step(): Takes an action in the environment and returns the next state, reward, done flag, truncated flag, auxiliary info.
+    - render(): Used to visualize the agnet-environment interaction.
+    - seed(): Sets the seed value.
+    - close(): Closes the simulation window.
+    """
     def __init__(self, data, scaler, target_scaler):
         super(ReservoirEnv, self).__init__()
 
@@ -40,6 +68,12 @@ class ReservoirEnv(Env):
         self.observation_space = Box(low=0, high=1, shape=(4,), dtype=np.float32)
 
     def reset(self, seed=None):
+        """
+        Resets the enviornment to the initial states and returns the corresponding state values.
+
+        Returns:
+        - state (numpy array of floating point numbers): The initial state values.
+        """
         self.current_step = 0
         info={}
         return self._get_observation(),info
@@ -49,6 +83,20 @@ class ReservoirEnv(Env):
         return obs
 
     def step(self, action):
+        """
+        Takes an action in the environment and returns the next state, reward, done flag, truncated flag, and auxiliary info.
+
+        Parameters:
+        - action (float): The action taken by the agent.
+
+        Returns:
+        - state (numpy array of floating point numbers): The next state of the environment.
+        - reward (int): The reward returned by the enviornment.
+        - done (bool): Flag indicating whether the episode is completed.
+        - truncated (bool): Flag indicating whether the episode was truncated due to a
+          reason not defined as part of the MDP.
+        - info (dict): Auxiliary information.
+        """
         release_scaled = action[0]
         # release = self.target_scaler.inverse_transform([[release_scaled]])[0, 0]
 
@@ -73,6 +121,12 @@ class ReservoirEnv(Env):
         return observation, reward, done, truncated, info
 
     def render(self, mode='human', close=False):
+        pass
+
+    def seed(self)->None:
+        pass
+    
+    def close(self)->None:
         pass
 
 # Load the data
@@ -155,10 +209,7 @@ plt.title('Agent Predicted Releases vs Actual Releases')
 plt.legend()
 plt.show()
 
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-import numpy as np
-
-# Assuming 'rescaled_predicted_releases' and 'rescaled_actual_releases' contain the rescaled predicted and actual releases
+# Assuming 'scaled_predicted_releases' and 'scaled_actual_releases' contain the scaled predicted and actual releases
 
 # Convert lists to numpy arrays for metric calculations
 scaled_predicted_releases = np.array(scaled_predicted_releases)
@@ -224,9 +275,6 @@ plt.ylabel('Total Release (cfs)')
 plt.title('Rescaled Agent Predicted Releases vs Rescaled Actual Releases')
 plt.legend()
 plt.show()
-
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-import numpy as np
 
 # Assuming 'rescaled_predicted_releases' and 'rescaled_actual_releases' contain the rescaled predicted and actual releases
 
