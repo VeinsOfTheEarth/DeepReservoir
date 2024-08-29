@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-@Shubh
+@Shubhendu
 
 Code to simulate Navajo reservoir control using PPO algorithm. This code creates an AI agent to imitate the reservoir operator.
 
