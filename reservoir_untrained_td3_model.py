@@ -1,7 +1,3 @@
-"""
-Code to initialize a TD3 agent and make predictions
-
-"""
 # Import necessary libraries
 import os
 import numpy as np
@@ -109,11 +105,6 @@ env = ReservoirEnv(dataset, min_storage_af, max_storage_af, min_release_af, max_
 n_actions = env.action_space.shape[-1]
 action_noise = NormalActionNoise(mean=np.zeros(n_actions), sigma=0.1 * np.ones(n_actions))
 model = TD3("MlpPolicy", env, action_noise=action_noise, verbose=1)
-
-# # Train the model
-# n_episodes = 1000
-# total_timesteps = n_episodes * episode_length
-# model.learn(total_timesteps=total_timesteps)
 
 # Save model
 model.save("td3_reservoir_agent")
