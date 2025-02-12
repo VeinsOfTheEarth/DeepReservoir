@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Code to initialize a TD3 agent and make predictions
 
