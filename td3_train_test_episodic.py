@@ -111,7 +111,7 @@ model = TD3("MlpPolicy", env, policy_kwargs={"net_arch": [400, 300]}, action_noi
 env.td3_model = model  
 
 # Train the model
-n_episodes = 1000
+n_episodes = 2000
 total_timesteps = n_episodes * episode_length
 model.learn(total_timesteps=total_timesteps)
 
