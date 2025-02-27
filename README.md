@@ -5,6 +5,33 @@ Repository for Reinforcement Learning (RL) codes to create Artificial Intelligen
 
 
 # Packages Used
+## Packages Used
+
+Here are some of the packages and libraries used in this project:
+
+- **[NumPy](https://numpy.org/)**  
+  ![NumPy](https://numpy.org/images/logo.svg)  
+
+- **[TensorFlow](https://www.tensorflow.org/)**  
+  ![TensorFlow](https://www.tensorflow.org/images/tf_logo_1.png)
+
+- **[Keras](https://keras.io/)**  
+  ![Keras](https://upload.wikimedia.org/wikipedia/commons/3/3b/Keras_logo.svg)
+
+- **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)**  
+  ![Stable-Baselines3](https://raw.githubusercontent.com/DLR-RM/stable-baselines3/master/docs/img/sb3-logo.png)
+
+- **[Matplotlib](https://matplotlib.org/)**  
+  ![Matplotlib](https://matplotlib.org/stable/_images/square_logo.png)
+
+- **[Pandas](https://pandas.pydata.org/)**  
+  ![Pandas](https://pandas.pydata.org/pandas-docs/stable/_images/pandas_logo.svg)
+
+- **[PyTorch](https://pytorch.org/)**  
+  ![PyTorch](https://pytorch.org/assets/images/pytorch-logo.png)
+
+- **[OpenAI Gym](https://gym.openai.com/)**  
+  ![OpenAI Gym](https://raw.githubusercontent.com/openai/gym/master/gym/envs/robotics/assets/gym_logo.png)
 
 
 
