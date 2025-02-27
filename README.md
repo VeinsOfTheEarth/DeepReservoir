@@ -12,7 +12,7 @@ Here are some of the packages and libraries used in this project:
   ![NumPy](https://numpy.org/images/logo.svg)
 
 - **[TensorFlow](https://www.tensorflow.org/)**  
-  ![TensorFlow](https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/TensorFlow_logo.svg/2560px-TensorFlow_logo.svg.png)
+  ![TensorFlow]([https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/TensorFlow_logo.svg/2560px-TensorFlow_logo.svg.png](https://icon-icons.com/icon/tensorflow-logo/170598))
 
 - **[Keras](https://keras.io/)**  
   ![Keras](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Keras_logo.svg/2560px-Keras_logo.svg.png)
