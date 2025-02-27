@@ -19,6 +19,7 @@ Here are some of the packages and libraries used in this project:
 
 - **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)**  
   ![Stable-Baselines3](https://github.com/shubhes/DeepReservoir/blob/main/logos/sb3%20logo.webp)
+  <img src="logos/logo1.png" width="50" height="50" />
 
 - **[Matplotlib](https://matplotlib.org/)**  
   ![Matplotlib](https://github.com/shubhes/DeepReservoir/blob/main/logos/matplotlib%20logo.png)
