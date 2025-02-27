@@ -30,7 +30,7 @@ Here are some of the packages and libraries used in this project:
   ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/Pytorch_logo.png)
 
 - **[Gymnasium](https://gymnasium.farama.org/)**  
-  ![OpenAI Gym](https://github.com/shubhes/DeepReservoir/blob/main/logos/openai%20gym%20logo.PNG)
+  ![Gymnasium](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
 
 
 
