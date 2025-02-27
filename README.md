@@ -20,6 +20,9 @@ Here are some of the packages and libraries used in this project:
 - **[Keras](https://keras.io/)**  
   ![Keras](https://github.com/shubhes/DeepReservoir/blob/main/logos/keras%20logo.PNG)
 
+- **[PyTorch](https://pytorch.org/)**  
+  ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/Pytorch_logo.png)
+
 - **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)**  
   ![Stable-Baselines3](https://github.com/shubhes/DeepReservoir/blob/main/logos/sb3%20logo.png)
   
@@ -28,9 +31,6 @@ Here are some of the packages and libraries used in this project:
 
 - **[Pandas](https://pandas.pydata.org/)**  
   ![Pandas](https://github.com/shubhes/DeepReservoir/blob/main/logos/pandas%20logo.jpg)
-
-- **[PyTorch](https://pytorch.org/)**  
-  ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/Pytorch_logo.png)
 
 - **[Scikit-Learn](https://scikit-learn.org/stable/)**  
   ![Scikit-Learn](https://github.com/shubhes/DeepReservoir/blob/main/logos/Scikit_learn_logo_small.png)
