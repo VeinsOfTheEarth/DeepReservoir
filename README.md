@@ -14,6 +14,9 @@ Here are some of the packages and libraries used in this project:
 - **[TensorFlow](https://www.tensorflow.org/)**  
   ![TensorFlow](https://github.com/shubhes/DeepReservoir/blob/main/logos/tensorflow_logo_icon_170598.png)
 
+- **[Gymnasium](https://gymnasium.farama.org/)**  
+  ![Gymnasium](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
+
 - **[Keras](https://keras.io/)**  
   ![Keras](https://github.com/shubhes/DeepReservoir/blob/main/logos/keras%20logo.PNG)
 
@@ -28,9 +31,6 @@ Here are some of the packages and libraries used in this project:
 
 - **[PyTorch](https://pytorch.org/)**  
   ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/Pytorch_logo.png)
-
-- **[Gymnasium](https://gymnasium.farama.org/)**  
-  ![Gymnasium](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
 
 - **[Scikit-Learn](https://scikit-learn.org/stable/)**  
   ![Scikit-Learn](https://github.com/shubhes/DeepReservoir/blob/main/logos/Scikit_learn_logo_small.png)
