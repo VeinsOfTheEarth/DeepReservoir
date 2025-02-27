@@ -6,6 +6,16 @@ Repository for Reinforcement Learning (RL) codes to create Artificial Intelligen
 
 # Packages Used
 
+Below is a list of packages and libraries used in this project:
+
+- **[NumPy](https://numpy.org/)**  
+  ![NumPy Logo](https://numpy.org/images/logo.svg)  
+  A fundamental package for scientific computing with Python.
+
+- **[Pandas](https://pandas.pydata.org/)**  
+  ![Pandas Logo](https://pandas.pydata.org/pandas-docs/stable/_images/pandas_logo.svg)  
+  A powerful data analysis and manipulation tool.
+
 # Models
 
 # Data
