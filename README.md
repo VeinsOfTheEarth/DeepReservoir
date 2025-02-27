@@ -84,4 +84,4 @@ year = {},
 
 This repository is provided under the Creative Commons **Attribution-NonCommercial-ShareAlike 4.0 International License**. Please review the license terms before using the content of the repository for any purpose other than non-commercial research and educational activities.
 
-For more information, contact **singhshubhendu29@gmail.com**.
+For more information, contact **jschwenk@lanl.gov**, **shubhsingh@lanl.gov**.
