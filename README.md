@@ -18,7 +18,7 @@ Here are some of the packages and libraries used in this project:
   ![Keras](https://github.com/shubhes/DeepReservoir/blob/main/logos/keras%20logo.PNG)
 
 - **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)**  
-  ![Stable-Baselines3](https://github.com/shubhes/DeepReservoir/blob/main/logos/sb3%20logo.webp)
+  ![Stable-Baselines3](https://github.com/shubhes/DeepReservoir/blob/main/logos/sb3%20logo.png)
   
 - **[Matplotlib](https://matplotlib.org/)**  
   ![Matplotlib](https://github.com/shubhes/DeepReservoir/blob/main/logos/matplotlib%20logo.png)
