@@ -27,7 +27,7 @@ Here are some of the packages and libraries used in this project:
   ![Pandas](https://github.com/shubhes/DeepReservoir/blob/main/logos/pandas%20logo.jpg)
 
 - **[PyTorch](https://pytorch.org/)**  
-  ![PyTorch](https://pytorch.org/assets/images/pytorch-logo.png)
+  ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/pytorch-logo-png_seeklogo-372199.png)
 
 - **[OpenAI Gym](https://gym.openai.com/)**  
   ![OpenAI Gym](https://raw.githubusercontent.com/openai/gym/master/gym/envs/robotics/assets/gym_logo.png)
