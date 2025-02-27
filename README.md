@@ -52,13 +52,13 @@ Here are some of the packages and libraries used in this project:
 
 | Experiment ID | Purpose | Agent | Action Space |Train-Test Split | Reward Function | Episode Length| Number of Episodes|
 |----------|----------|----------|----------|----------|----------|----------|----------|
-| 1 | Row 1, Col 2 | DQN | Discrete | N/A | Binary (±1) | 120 | Row 1, Col 3 |
-| 2 | Row 2, Col 2 | DQN | Discrete | N/A | Binary (±1) | 120 | Row 1, Col 3 |
-| 3 | Row 3, Col 2 | PPO | Continuous | 18000-3000 | Binary (±1) | 120 | Row 1, Col 3 |
-| 4 | Row 3, Col 2 | PPO | Continuous | 18000-3000 | Binary (±1) | 360 | 5000 |
-| 5 | Row 1, Col 2 | PPO | Continuous | 18000-3000 | Binary (±1) | 3600 | 500 |
-| 6 | Row 2, Col 2 | TD3 | Continuous | 18000-3000 | Binary (±1) | 120 | Row 1, Col 3 |
-| 7 | Row 3, Col 2 | TD3 | Continuous | 18000-3000 | Binary (±1) | 3600 | 500 |
+| 1 | - | DQN | Discrete | N/A | Binary (±1) | 120 | - |
+| 2 | - | DQN | Discrete | N/A | Binary (±1) | 120 | - |
+| 3 | - | PPO | Continuous | 18000-3000 | Binary (±1) | 120 | - |
+| 4 | - | PPO | Continuous | 18000-3000 | Binary (±1) | 360 | 5000 |
+| 5 | - | PPO | Continuous | 18000-3000 | Binary (±1) | 3600 | 500 |
+| 6 | - | TD3 | Continuous | 18000-3000 | Binary (±1) | 120 | - |
+| 7 | - | TD3 | Continuous | 18000-3000 | Binary (±1) | 3600 | 500 |
 
 
 # Usage
