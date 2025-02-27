@@ -30,7 +30,7 @@ Here are some of the packages and libraries used in this project:
   ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/Pytorch_logo.png)
 
 - **[OpenAI Gym](https://gym.openai.com/)**  
-  ![OpenAI Gym](https://raw.githubusercontent.com/openai/gym/master/gym/envs/robotics/assets/gym_logo.png)
+  ![OpenAI Gym](https://github.com/shubhes/DeepReservoir/blob/main/logos/openai%20gym%20logo.PNG)
 
 
 
