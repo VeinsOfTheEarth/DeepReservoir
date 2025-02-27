@@ -1,7 +1,7 @@
 # Reservoir
 Repository for Reinforcement Learning (RL) codes to simulate reservoir operations
 
-!DRL agent for reservoir control.jpg
+![Alt Text](https://github.com/shubhes/DeepReservoir/blob/main/DRL%20agent%20for%20reservoir%20control.jpg)
 
 
 # Packages Used
