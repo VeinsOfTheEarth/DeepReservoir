@@ -52,8 +52,8 @@ Here are some of the packages and libraries used in this project:
 
 | Experiment ID | Purpose | Agent | Action Space |Train-Test Split | Reward Function | Episode Length| Number of Episodes|
 |----------|----------|----------|----------|----------|----------|----------|----------|
-| 1 | - | DQN | Discrete | N/A | Binary (±1) | 120 | - |
-| 2 | - | DQN | Discrete | N/A | Binary (±1) | 120 | - |
+| 1 | - | DQN | Discrete | N/A | Binary (±1) | 120 | 20000 |
+| 2 | - | DQN | Discrete | N/A | Binary (±1) | 120 | 20000 |
 | 3 | - | PPO | Continuous | 18000-3000 | Binary (±1) | 120 | - |
 | 4 | - | PPO | Continuous | 18000-3000 | Binary (±1) | 360 | 5000 |
 | 5 | - | PPO | Continuous | 18000-3000 | Binary (±1) | 3600 | 500 |
