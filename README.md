@@ -41,6 +41,9 @@ Here are some of the packages and libraries used in this project:
 # Models
 
 # Data
+This project uses data from the U.S. Bureau of Reclamation (USBR). You can access the data at the following link:
+
+[U.S. Bureau of Reclamation Data](https://www.usbr.gov)
 
 # Codes
 
