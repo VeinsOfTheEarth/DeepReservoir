@@ -41,7 +41,7 @@ Here are some of the packages and libraries used in this project:
 # Models
 
 # Data
-This project uses data from the U.S. Bureau of Reclamation (USBR). The curated data file is stored in the repository within a folder named 'data'. Data can be accessed at the following link:
+This project uses data from the U.S. Bureau of Reclamation (USBR). Data can be accessed through the following link:
 
 [USBR- Reservoir Data](https://github.com/shubhes/DeepReservoir/blob/main/data/Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv)
 
