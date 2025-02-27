@@ -32,6 +32,9 @@ Here are some of the packages and libraries used in this project:
 - **[Gymnasium](https://gymnasium.farama.org/)**  
   ![Gymnasium](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
 
+- **[Scikit-Learn](https://scikit-learn.org/stable/)**  
+  ![Scikit-Learn](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
+
 
 
 
