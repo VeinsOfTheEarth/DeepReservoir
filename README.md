@@ -21,7 +21,7 @@ Here are some of the packages and libraries used in this project:
   ![Stable-Baselines3](https://github.com/shubhes/DeepReservoir/blob/main/logos/sb3%20logo.webp)
 
 - **[Matplotlib](https://matplotlib.org/)**  
-  ![Matplotlib](https://matplotlib.org/stable/_images/square_logo.png)
+  ![Matplotlib](https://github.com/shubhes/DeepReservoir/blob/main/logos/matplotlib%20logo.png)
 
 - **[Pandas](https://pandas.pydata.org/)**  
   ![Pandas](https://pandas.pydata.org/pandas-docs/stable/_images/pandas_logo.svg)
