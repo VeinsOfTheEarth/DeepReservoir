@@ -8,7 +8,7 @@ Repository for Reinforcement Learning (RL) codes to create Artificial Intelligen
 
 Here are some of the packages and libraries used in this project:
 
-- **[NumPy](https://numpy.org/)**  
+- **[NumPy](https://numpy.org/)**                                                                      
   ![NumPy](https://github.com/shubhes/DeepReservoir/blob/main/logos/NumPy_logo_2020.svg.png)
 
 - **[TensorFlow](https://www.tensorflow.org/)**  
