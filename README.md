@@ -1,5 +1,5 @@
 # Reservoir
-Repository for Reinforcement Learning (RL) codes to simulate reservoir operations
+Repository for Reinforcement Learning (RL) codes to create an AI agent to manage reservoir opertaions autonomously
 
 ![Alt Text](https://github.com/shubhes/DeepReservoir/blob/main/DRL%20agent%20for%20reservoir%20control.jpg)
 
