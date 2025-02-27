@@ -1,7 +1,7 @@
 # Reservoir
 Repository for Reinforcement Learning (RL) codes to simulate reservoir operations
 
-!(DRL agent for reservoir control.jpg)
+!DRL agent for reservoir control.jpg
 
 
 # Packages Used
