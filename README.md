@@ -63,6 +63,10 @@ Here are some of the packages and libraries used in this project:
 | 9 | Row 3, Col 2 | Row 3, Col 3 | Row 1, Col 1 | Row 1, Col 2 | Row 1, Col 3 | Row 1, Col 3 |
 
 # Usage
+Researchers and practitioners in the field of reservoir operations can utilize this dataset for various purposes, including:
+
+*Developing and testing reservoir control algorithms
+*Investigating reservoir behavior under different operational conditions
 
 # Citation
 
