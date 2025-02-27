@@ -1,7 +1,7 @@
 # DeepReservoir
 Repository for Reinforcement Learning (RL) codes to create Artificial Intelligence (AI) agents for autonomous management of reservoir operations
 
-![DeepReservoir](https://github.com/shubhes/DeepReservoir/blob/main/DRL%20agent%20for%20reservoir%20control.jpg)
+![DeepReservoir](https://github.com/shubhes/DeepReservoir/blob/main/logos/DRL%20agent%20for%20reservoir%20control.jpg)
 
 
 # Packages Used
