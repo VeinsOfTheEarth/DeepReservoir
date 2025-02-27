@@ -24,7 +24,7 @@ Here are some of the packages and libraries used in this project:
   ![Matplotlib](https://github.com/shubhes/DeepReservoir/blob/main/logos/matplotlib%20logo.png)
 
 - **[Pandas](https://pandas.pydata.org/)**  
-  ![Pandas](https://pandas.pydata.org/pandas-docs/stable/_images/pandas_logo.svg)
+  ![Pandas](https://github.com/shubhes/DeepReservoir/blob/main/logos/pandas%20logo.jpg)
 
 - **[PyTorch](https://pytorch.org/)**  
   ![PyTorch](https://pytorch.org/assets/images/pytorch-logo.png)
