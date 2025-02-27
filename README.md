@@ -24,7 +24,7 @@ Repository for Reinforcement Learning (RL) codes to simulate reservoir operation
 
 <table>
   <tr>
-    <th style="background-color: #4CAF50; color: white;">Name</th>
+    <th style="background-color: #4CAF50; color: red;">Name</th>
     <th style="background-color: #4CAF50; color: white;">Age</th>
     <th style="background-color: #4CAF50; color: white;">Country</th>
   </tr>
