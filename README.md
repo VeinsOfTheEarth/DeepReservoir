@@ -6,38 +6,6 @@ Repository to create Reinforcement Learning (RL) based Artificial Intelligence (
 
 # Packages Used
 
-Here are some of the packages and libraries used in this project:
-
-- **[NumPy](https://numpy.org/)**                                                                      
-  ![NumPy](https://github.com/shubhes/DeepReservoir/blob/main/logos/NumPy_logo_2020.svg.png)
-
-- **[TensorFlow](https://www.tensorflow.org/)**  
-  ![TensorFlow](https://github.com/shubhes/DeepReservoir/blob/main/logos/tensorflow_logo_icon_170598.png)
-
-- **[Gymnasium](https://gymnasium.farama.org/)**  
-  ![Gymnasium](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
-
-- **[Keras](https://keras.io/)**  
-  ![Keras](https://github.com/shubhes/DeepReservoir/blob/main/logos/keras%20logo.PNG)
-
-- **[PyTorch](https://pytorch.org/)**  
-  ![PyTorch](https://github.com/shubhes/DeepReservoir/blob/main/logos/Pytorch_logo.png)
-
-- **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)**  
-  ![Stable-Baselines3](https://github.com/shubhes/DeepReservoir/blob/main/logos/sb3%20logo.png)
-  
-- **[Matplotlib](https://matplotlib.org/)**  
-  ![Matplotlib](https://github.com/shubhes/DeepReservoir/blob/main/logos/matplotlib%20logo.png)
-
-- **[Pandas](https://pandas.pydata.org/)**  
-  ![Pandas](https://github.com/shubhes/DeepReservoir/blob/main/logos/pandas%20logo.jpg)
-
-- **[Scikit-Learn](https://scikit-learn.org/stable/)**  
-  ![Scikit-Learn](https://github.com/shubhes/DeepReservoir/blob/main/logos/Scikit_learn_logo_small.png)
-
-
-
-
 # Models
 
 # Data
