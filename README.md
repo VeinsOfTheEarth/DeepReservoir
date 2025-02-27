@@ -31,7 +31,14 @@ Repository for Reinforcement Learning (RL) codes to simulate reservoir operation
 
 # Citation
 
-
+@misc{shubhesD73:online,
+author = {},
+  title = {shubhes/DeepReservoir: Repository for Reinforcement Learning codes to simulate reservoir operations},
+  url = "https://github.com/shubhes/DeepReservoir",
+month = {},
+year = {},
+  note = "[Online; accessed 2025-02-26]"
+}
 
 # License
 
