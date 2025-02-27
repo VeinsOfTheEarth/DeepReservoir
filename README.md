@@ -29,3 +29,8 @@ Repository for Reinforcement Learning (RL) codes to simulate reservoir operation
 
 # Usage
 
+# License
+
+This dataset is provided under the Creative Commons **Attribution-NonCommercial-ShareAlike 4.0 International License**. Please review the license terms before using the dataset for any purpose other than non-commercial research and educational activities.
+
+For more information, contact **singhshubhendu29@gmail.com**.
