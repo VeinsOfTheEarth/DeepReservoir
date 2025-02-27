@@ -33,7 +33,7 @@ Here are some of the packages and libraries used in this project:
   ![Gymnasium](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
 
 - **[Scikit-Learn](https://scikit-learn.org/stable/)**  
-  ![Scikit-Learn](https://github.com/shubhes/DeepReservoir/blob/main/logos/gymnasium-text.png)
+  ![Scikit-Learn](https://github.com/shubhes/DeepReservoir/blob/main/logos/Scikit_learn_logo_small.png)
 
 
 
