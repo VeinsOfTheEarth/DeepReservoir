@@ -15,7 +15,7 @@ Here are some of the packages and libraries used in this project:
   ![TensorFlow](https://github.com/shubhes/DeepReservoir/blob/main/logos/tensorflow_logo_icon_170598.png)
 
 - **[Keras](https://keras.io/)**  
-  ![Keras](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Keras_logo.svg/2560px-Keras_logo.svg.png)
+  ![Keras](https://github.com/shubhes/DeepReservoir/blob/main/logos/keras%20logo.PNG)
 
 - **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)**  
   ![Stable-Baselines3](https://raw.githubusercontent.com/DLR-RM/stable-baselines3/master/docs/img/sb3-logo.png)
