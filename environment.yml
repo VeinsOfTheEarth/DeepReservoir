@@ -1,0 +1,15 @@
+name: myenv
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - numpy
+  - pandas
+  - torch
+  - gymnasium
+  - stable-baselines3
+  - matplotlib
+  - pip
+  - pip:
+      - gymnasium[all]  # To ensure additional gymnasium dependencies
