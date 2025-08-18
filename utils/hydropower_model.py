@@ -1,24 +1,33 @@
-## USAGE
-# You may need to update the path to the parameters.pkl file depending on how your paths/environment is structured.
-# from navajo_model import navajo_power_generation_model
-
-# # Provide your own input data and optimization result:
-# energy = navajo_power_generation_model(dates, flows, elevations, result_eta)
-# dates are pd.datetime, flows are cfs, elevations are reservoir elevations in feet.
-
-
+# navajo_model.py
 import numpy as np
 import pandas as pd
 import pickle
-from scipy.interpolate import CubicSpline, interp1d
+from pathlib import Path
+from typing import Optional, Union, Sequence
+from scipy.interpolate import interp1d
 
-# Load model parameters only once
-path_model_params = "parameters.pkl"
-with open(path_model_params, "rb") as f:
-    _params = pickle.load(f)
+# -------------------------------------------------------------------
+# Load single-eta parameter from pickle
+# -------------------------------------------------------------------
+path_model_params = Path(r"X:\Research\DeepReservoir\Hydropower\parameters.pkl")
 
+def _load_eta_from_pickle(pkl_path: Path) -> float:
+    with open(pkl_path, "rb") as f:
+        obj = pickle.load(f)
+    if isinstance(obj, dict) and "eta_eff" in obj:
+        return float(obj["eta_eff"])
+    raise ValueError("Unsupported parameters.pkl format (expected dict with 'eta_eff').")
 
-# Internal tailwater model (hidden from import)
+_eta_loaded: Optional[float] = None
+if path_model_params.exists():
+    try:
+        _eta_loaded = _load_eta_from_pickle(path_model_params)
+    except Exception:
+        _eta_loaded = None
+
+# -------------------------------------------------------------------
+# Internal tailwater model
+# -------------------------------------------------------------------
 def _create_tailwater_model():
     data_points = [
         (0, 5711.7),
@@ -33,65 +42,62 @@ def _create_tailwater_model():
     x, y = zip(*data_points)
     return interp1d(x, y, kind="linear", fill_value="extrapolate")
 
-
 _tailwater_model = _create_tailwater_model()
 
+# Constants
+_RHO = 1000.0
+_G = 9.81
+_CFS_TO_CMS = 0.0283168
+_FT_TO_M = 0.3048
+_TURBINE_LIMIT_CFS = 1300.0
+_PLANT_CAPACITY_MW = 32.0
 
-def navajo_power_generation_model(dates, cfs_values, elevation_ft):
+# -------------------------------------------------------------------
+# Public API
+# -------------------------------------------------------------------
+def navajo_power_generation_model(
+    cfs_values: Union[float, Sequence[float]],
+    elevation_ft: Union[float, Sequence[float]],
+    eta_eff: Optional[float] = None,
+) -> Union[float, np.ndarray]:
     """
-    Predict daily energy production from date(s), release(s), and reservoir elevation(s)
-    using fitted monthly efficiency splines by era.
+    Predict daily energy production (MWh) given releases (cfs) and reservoir
+    elevations (feet), using a single global efficiency eta.
 
     Parameters
     ----------
-    dates : str, pd.Timestamp, or array-like of datetime-like
     cfs_values : float or array-like
+        Releases in cubic feet per second.
     elevation_ft : float or array-like
+        Reservoir elevation in feet.
+    eta_eff : float, optional
+        Efficiency to use. If None, loads from parameters.pkl.
 
     Returns
     -------
     energy_MWh : float or np.ndarray
+        Daily energy production in MWh.
     """
-    # Vectorize inputs
-    dates = pd.to_datetime(dates)
-    cfs_values = np.asarray(cfs_values)
-    elevation_ft = np.asarray(elevation_ft)
+    if eta_eff is None:
+        if _eta_loaded is None:
+            raise RuntimeError("No eta provided and could not load from parameters.pkl.")
+        eta_eff = _eta_loaded
 
-    # Determine era
-    years = pd.DatetimeIndex(dates).year
-    day_of_year = pd.DatetimeIndex(dates).dayofyear
+    q_cfs = np.asarray(cfs_values, dtype=float)
+    elev_ft = np.asarray(elevation_ft, dtype=float)
 
-    # Extract eta values and build splines
-    eta_pre2010 = np.append(_params.x[:12], _params.x[0])
-    eta_2010s = np.append(_params.x[12:24], _params.x[12])
-    eta_post2020 = np.append(_params.x[24:], _params.x[24])
-
-    knot_days = np.linspace(1, 366, 13, endpoint=True)
-
-    spline_pre2010 = CubicSpline(knot_days, eta_pre2010, bc_type="periodic")
-    spline_2010s = CubicSpline(knot_days, eta_2010s, bc_type="periodic")
-    spline_post2020 = CubicSpline(knot_days, eta_post2020, bc_type="periodic")
-
-    era_spline = np.where(
-        years < 2010,
-        spline_pre2010(day_of_year),
-        np.where(years < 2020, spline_2010s(day_of_year), spline_post2020(day_of_year)),
-    )
-
-    eta = np.clip(era_spline, 0, 0.95)
-
-    # Calculate head
-    tailwater_ft = _tailwater_model(cfs_values)
-    head_m = (elevation_ft - tailwater_ft) * 0.3048
+    # Tailwater and head
+    tw_ft = _tailwater_model(q_cfs)
+    head_m = (elev_ft - tw_ft) * _FT_TO_M
     head_m = np.clip(head_m, 0, None)
 
-    # Flow in m3/s
-    Q_m3s = np.clip(cfs_values, 0, 1300) * 0.0283168
+    # Flow to m³/s with turbine limit
+    q_cfs_capped = np.clip(q_cfs, 0, _TURBINE_LIMIT_CFS)
+    q_cms = q_cfs_capped * _CFS_TO_CMS
 
-    rho = 1000
-    g = 9.81
-    power_MW = eta * rho * g * Q_m3s * head_m / 1e6
-    power_MW = np.minimum(power_MW, 32)
-    energy_MWh = power_MW * 24
+    power_MW = eta_eff * _RHO * _G * q_cms * head_m / 1e6
+    power_MW = np.minimum(power_MW, _PLANT_CAPACITY_MW)
+    energy_MWh = power_MW * 24.0
 
-    return energy_MWh if isinstance(energy_MWh, np.ndarray) else float(energy_MWh)
+    # Return scalar if scalar input
+    return energy_MWh if energy_MWh.ndim > 0 and energy_MWh.size > 1 else float(energy_MWh)
