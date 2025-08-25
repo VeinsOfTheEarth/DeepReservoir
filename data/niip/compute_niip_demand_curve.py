@@ -66,26 +66,39 @@ plt.grid(True)
 plt.tight_layout()
 plt.show()
 
+# Save the spline data to disk
+import pickle
+t, c, k = spline._eval_args  # full knot vector + coeffs + degree
+spline_data = {"t": t, "c": c, "k": int(k), "version": 2}
 
+path_spline_params = r"X:\Research\DeepReservoir\Code\DeepReservoir\utils\niip_demand_spline.pkl"
+with open(path_spline_params, "wb") as f:
+    pickle.dump(spline_data, f)
 
+## Testing
+# Reconstruct the spline object
+with open(r"X:\Research\DeepReservoir\Code\DeepReservoir\utils\niip_demand_spline.pkl", "rb") as f:
+    spline_data = pickle.load(f)
+spline = UnivariateSpline._from_tck((spline_data["t"], spline_data["c"], spline_data["k"]))
 
+def seasonal_avg_flow(doy):
+    """
+    Returns seasonal average flow for given day-of-year(s), using the loaded spline fit.
+    - Outside DOY 50–300: returns 0
+    - Negative values are clipped to 0
+    """
+    doy = np.asarray(doy)
+    raw = np.where((doy >= 50) & (doy <= 300), spline(doy), 0.0)
+    return np.maximum(raw, 0.0)
 
+# --- Example usage ---
+days = np.arange(1, 367)
+flow = seasonal_avg_flow(days)
 
-
-
-
-
-
-# Annual volumes
-annual_volume = df.resample("Y")["Flow (cfs)"].sum()
-# 1 cfs-day = 1.9835 acre-feet
-annual_volume_af = annual_volume * 1.9835
-
-annual_volume_af.index = annual_volume_af.index.year
-
-plt.figure(figsize=(10, 4))
-annual_volume_af.plot(kind="bar")
-plt.ylabel("Annual Volume (acre-feet)")
-plt.title("Total Annual Streamflow")
-plt.tight_layout()
+import matplotlib.pyplot as plt
+plt.plot(days, flow, label="Reconstructed demand curve")
+plt.xlabel("Day of Year")
+plt.ylabel("Flow (cfs)")
+plt.legend()
+plt.grid(True)
 plt.show()
