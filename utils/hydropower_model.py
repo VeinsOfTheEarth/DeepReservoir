@@ -101,3 +101,10 @@ def navajo_power_generation_model(
 
     # Return scalar if scalar input
     return energy_MWh if energy_MWh.ndim > 0 and energy_MWh.size > 1 else float(energy_MWh)
+
+
+# df = pd.read_csv(r"X:\Research\DeepReservoir\Code\DeepReservoir\data\Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv")
+# energies = navajo_power_generation_model(df['Total Release (cfs)'], df['Elevation (feet)'])    
+# import matplotlib.pyplot as plt
+# plt.plot(energies)
+# plt.show()
