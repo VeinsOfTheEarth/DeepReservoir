@@ -103,8 +103,91 @@ def navajo_power_generation_model(
     return energy_MWh if energy_MWh.ndim > 0 and energy_MWh.size > 1 else float(energy_MWh)
 
 
+# import matplotlib.pyplot as plt
 # df = pd.read_csv(r"X:\Research\DeepReservoir\Code\DeepReservoir\data\Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv")
 # energies = navajo_power_generation_model(df['Total Release (cfs)'], df['Elevation (feet)'])    
-# import matplotlib.pyplot as plt
 # plt.plot(energies)
 # plt.show()
+
+# # --- Load & compute daily energy ---
+# df = pd.read_csv(r"X:\Research\DeepReservoir\Code\DeepReservoir\data\Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv")
+# start_yr, end_yr = 2000, 2010   # <-- adjust as needed
+
+# date_col = "Date"  # update if needed
+# df[date_col] = pd.to_datetime(df[date_col])
+# df = df.sort_values(date_col)
+
+# energy_MWh = navajo_power_generation_model(df['Total Release (cfs)'], df['Elevation (feet)'])
+# s = pd.Series(energy_MWh, index=df[date_col], name="energy_MWh")
+
+# # --- Year filter ---
+# mask = (s.index.year >= start_yr) & (s.index.year <= end_yr)
+# s = s[mask]
+
+# # --- Remove Feb 29 so DOY aligns to 365 ---
+# is_feb29 = (s.index.month == 2) & (s.index.day == 29)
+# s = s[~is_feb29]
+
+# # --- Climatology stats ---
+# doy = s.index.dayofyear
+# grouped = s.groupby(doy)
+
+# mean_vals = grouped.mean()
+# q25_vals = grouped.quantile(0.25)
+# q75_vals = grouped.quantile(0.75)
+
+# clim = pd.DataFrame({
+#     "mean": mean_vals,
+#     "q25": q25_vals,
+#     "q75": q75_vals
+# })
+
+# # --- Plot ---
+# plt.figure(figsize=(8, 5))
+# plt.plot(clim.index, clim['mean'], linewidth=2, label='Mean')
+# plt.fill_between(clim.index, clim['q25'], clim['q75'], alpha=0.2, label='25–75%')
+# plt.xlabel('Day of Year')
+# plt.ylabel('Energy (MWh/day)')
+# plt.title(f'Historical Energy Production, Simulated ({start_yr} - {end_yr})')
+# plt.grid(True, alpha=0.3)
+# plt.legend()
+# plt.tight_layout()
+# plt.show()
+
+
+# # Look at how elevation impacts power generation
+# import numpy as np
+# import pandas as pd
+# import matplotlib.pyplot as plt
+
+# # --- Choose an elevation range ---
+# # Option A: use your CSV to bound the realistic elevation range
+# df = pd.read_csv(r"X:\Research\DeepReservoir\Code\DeepReservoir\data\Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv")
+# emin = float(np.nanmin(df['Elevation (feet)']))
+# emax = float(np.nanmax(df['Elevation (feet)']))
+
+# # Option B (fallback): set an explicit range if you prefer
+# emin, emax = 6030, 6151
+
+# elev_ft = np.linspace(emin, emax, 300)
+
+# # --- Fix flow at turbine max ---
+# q_cfs = 1300.0
+# q_arr = np.full_like(elev_ft, q_cfs, dtype=float)
+
+# # --- Run your model (returns MWh/day) and convert to MW ---
+# energy_MWh = navajo_power_generation_model(q_arr, elev_ft)
+# power_MW = energy_MWh / 24.0
+
+# # --- Plot ---
+# plt.figure(figsize=(7.5, 5))
+# plt.plot(elev_ft, power_MW, linewidth=2)
+# plt.axhline(_PLANT_CAPACITY_MW, linestyle='--', linewidth=1, label=f'Plant capacity ({_PLANT_CAPACITY_MW:.0f} MW)')
+# plt.title('Hydropower vs. Elevation at 1300 cfs')
+# plt.xlabel('Reservoir Elevation (ft)')
+# plt.ylabel('Power (MW)')
+# plt.grid(True, alpha=0.3)
+# plt.legend()
+# plt.tight_layout()
+# plt.show()
+
