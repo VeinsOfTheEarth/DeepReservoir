@@ -27,11 +27,14 @@ swe_daily = swe_helpers.build_daily_swe(swe_an)  # meters
 # Flow (15-min) -> daily mean with coverage rule
 
 # Build WY metrics
-q15 = cfs['Animas @ Farmington']
-
-q_daily = swe_helpers.build_daily_q(q15)
+an_daily = swe_helpers.build_daily_q(cfs['Animas @ Farmington'])
 q_daily = usbr["release_cfs"]  # daily
 
+start = '2000-01-01'
+end = '2100-01-01'
+
+q_daily = q_daily.loc[pd.to_datetime(start) : pd.to_datetime(end)].copy()
+swe_daily = swe_daily.loc[pd.to_datetime(start) : pd.to_datetime(end)].copy()
 wy = swe_helpers.assemble_wy_metrics(swe_daily, q_daily)
 
 # Compute relationships for mean and peak spring flow
@@ -61,68 +64,23 @@ params = swe_helpers.SPEParams(
 spe = swe_helpers.detect_spe_all_years(usbr, params=params, prefer_col="release_cfs")
 print(spe.index.values[spe['classified_SPE']==True])
 # 2) Plot with shading
-swe_helpers.plot_spe_timeline(usbr, spe)      # shade detected event windows
+swe_helpers.plot_spe_timeline(q_daily, spe, title='Navajo: Spring Peak Events')      # shade detected event windows
 
-swe_helpers.plot_animas_vs_prespring_storage(cfs_an, usbr, spe_df=spe, storage_method="mar_mean")
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-
-# Data
-d = wy[['SWE_peak_mm', 'Q_AprJul_mean_cfs']].dropna().copy()
-
-# SPR flags from `spe` (default False if missing)
-spr_flags = d.index.to_series().map(
-    lambda wy_: bool(spe.loc[wy_, 'classified_SPE']) if ('spe' in globals()
-        and spe is not None and not spe.empty and wy_ in spe.index
-        and 'classified_SPE' in spe.columns) else False
+swe_helpers.plot_animas_vs_prespring_storage(
+    an_daily, usbr, spe_df=spe,
+    storage_method="mar_mean",
+    colors = {"pre": "#9ca3af", "no": "#f50b46", "spr": "#2563eb"},
+    title="PSR conditions",
+    annotate_wy=True,  # set True if you want WY labels
+    year_split=2000,
+    point_size = 80
 )
-d['spr'] = spr_flags.values
 
-# Colors
-color_spr = 'tab:blue'
-color_no  = '#f4a261'
-point_colors = np.where(d['spr'].to_numpy(), color_spr, color_no)
-
-# Regression (all points)
-x = d['SWE_peak_mm'].to_numpy()
-y = d['Q_AprJul_mean_cfs'].to_numpy()
-a, b = np.polyfit(x, y, 1)
-xx = np.linspace(x.min(), x.max(), 300)
-yy = a*xx + b
-r = np.corrcoef(x, y)[0, 1]
-
-# Plot
-plt.figure(figsize=(7.8, 5.6))
-ax = plt.gca()
-ax.scatter(x, y, s=38, c=point_colors, alpha=0.9,
-           edgecolor='white', linewidth=0.7)
-line_handle, = ax.plot(xx, yy, lw=2.2, color='#333333', alpha=0.85,
-                       label=f'OLS fit: y = {a:.2f}x + {b:.0f}')
-
-# Grid / cosmetics
-ax.minorticks_on()
-ax.grid(which="major", linestyle="-", alpha=0.25)
-ax.grid(which="minor", linestyle=":", alpha=0.12)
-for sp in ("top", "right"): ax.spines[sp].set_visible(False)
-ax.tick_params(axis="both", which="both", length=0)
-
-ax.set_xlabel("Peak SWE (mm)")
-ax.set_ylabel("Apr–Jul mean Q (cfs)")
-ax.set_title(f"Peak SWE vs Spring Mean Flow\nr = {r:.2f}, n = {len(d)}")
-
-# Legend
-pt_spr = Line2D([], [], marker='o', linestyle='None', markersize=7,
-                markerfacecolor=color_spr, markeredgecolor='white',
-                markeredgewidth=0.7, label='SPR attempted')
-pt_no  = Line2D([], [], marker='o', linestyle='None', markersize=7,
-                markerfacecolor=color_no, markeredgecolor='white',
-                markeredgewidth=0.7, label='No SPR')
-ax.legend([pt_spr, pt_no, line_handle],
-          ['SPR attempted', 'No SPR', 'OLS fit'],
-          frameon=False, loc='best')
-
-plt.tight_layout()
-plt.show()
+swe_helpers.plot_swe_vs_prespring_storage(
+    wy, usbr, spe_df=spe,
+    swe_col="SWE_peak_mm",          # or another SWE metric column if you add one
+    storage_method="mar_mean",
+    title="Peak SWE vs pre-Spring storage",
+    annotate_wy=True,
+    point_size=96
+)
