@@ -1,15 +1,21 @@
-name: myenv
+name: deepreservoir
 channels:
-  - defaults
-  - conda-forge
+  - pytorch        # for PyTorch
+  - conda-forge    # everything else
 dependencies:
-  - python=3.9
+  - python=3.10
   - numpy
   - pandas
-  - torch
+  - pyarrow        # pandas.read_parquet() support
+  - scipy          # interpolation/stats you'll want for hydrology
+  - matplotlib
+  - pyyaml         # for simple experiment/config files
   - gymnasium
   - stable-baselines3
-  - matplotlib
+  - pytorch
+  - cpuonly        # CPU build; swap lines below if you have a CUDA GPU
+  # - pytorch-cuda=12.1      # (GPU option) requires the nvidia channel
+  # - nvidia::cuda-toolkit   # (GPU option) if you actually build CUDA ops
+  - tensorboard    # training logs/metrics
+  - tqdm           # progress bars
   - pip
-  - pip:
-      - gymnasium[all]  # To ensure additional gymnasium dependencies

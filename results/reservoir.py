@@ -2,23 +2,6 @@
 """
 @author: Shubhendu
 """
-from datetime import date
-
-# Setup paths
-hydropower_model_path = "/hydropower_model.py"
-parameters_path = "/parameters.pkl"
-main_data_path = "/Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv"
-niip_model_path = "/niip_demand.py"
-niip_splinecurve_path = "/niip_demand_spline.pkl"
-
-# Copy required files
-import shutil
-shutil.copy(hydropower_model_path, "./hydropower_model.py")
-shutil.copy(parameters_path, "./parameters.pkl")
-shutil.copy(niip_model_path, "./niip_demand.py")
-shutil.copy(niip_splinecurve_path, "./niip_demand_spline.pkl")
-
-# Imports
 import os
 import pickle
 import numpy as np
@@ -26,6 +9,7 @@ import pandas as pd
 import torch as th
 import tensorflow as tf
 import gymnasium
+from datetime import date
 from gymnasium import Env
 from gymnasium.spaces import Box
 from stable_baselines3 import PPO
@@ -35,7 +19,20 @@ from hydropower_model import navajo_power_generation_model
 from niip_demand import niip_daily_demand
 
 # Load main data
-data = pd.read_csv(main_data_path)
+import pandas as pd
+from importlib import reload
+# reload(loader)
+from deepreservoir.data import loader
+data = loader.NavajoData()
+
+# one-shot load
+everything = data.load_all(include_cont_streamflow=False, model_data=True)
+model_data = everything["model_data"]
+
+
+
+
+
 storage = data['Storage (af)'].values
 evaporation = data['Evaporation (af)'].values
 inflow_af = data['Inflow** (cfs)'].values * 1.98211

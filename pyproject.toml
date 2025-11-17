@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepreservoir"            # must be unique on PyPI
+version = "0.0.1"
+description = "Deep RL tools for Navajo Reservoir operation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "BSD-3-Clause" }  # or whatever you choose
+authors = [
+  { name = "Jon Schwenk" },
+  { name = "Shubhendu Singh" }
+
+]
+dependencies = [
+  "numpy",
+  "pandas",
+  "torch",
+  "stable-baselines3",
+  "matplotlib",
+]
+
+[project.urls]
+Homepage = "https://github.com/<your-user-or-org>/deepreservoir"
+Issues = "https://github.com/<your-user-or-org>/deepreservoir/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
