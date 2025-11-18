@@ -23,13 +23,14 @@ class Metadata:
     daily_series: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     continuous_series: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     tables: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    model_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def _abs(self, p: Path | str) -> Path:
         p = p if isinstance(p, Path) else Path(p)
         return p if p.is_absolute() else (self.base_dir / p)
 
     def resolve_paths(self) -> "Metadata":
-        for group in (self.daily_series, self.continuous_series, self.tables):
+        for group in (self.daily_series, self.continuous_series, self.tables, self.model_params):
             for _, cfg in group.items():
                 cfg["path"] = self._abs(cfg["path"])
         return self
@@ -261,5 +262,20 @@ def project_metadata() -> Metadata:
             "required": ("elev_ft", "area_ac", "capacity_af"),
         },
     }
+
+        # Model parameter files (pickles, etc.)
+    m.model_params = {
+        "hydropower_eta": {
+            "path": "data/hydropower/hydropower_parameters.pkl",
+            "kind": "pickle",
+            "description": "Global efficiency eta for Navajo hydropower model",
+        },
+        "elev_area_storage": {
+            "path": "data\elevation_area_storage_relationships\2019_elevation_area_capacity.pkl",
+            "kind": "pickle",
+            "description": "Piecewise linear E–A–S interpolators based on 2019 data",
+        },
+    }
+
 
     return m.resolve_paths()

@@ -16,25 +16,29 @@ from deepreservoir.data.loader import DataPaths
 
 
 def linear_interpolator(x, y, nbreaks, plot=True):
+    x = np.asarray(x)
+    y = np.asarray(y)
 
-    """
-    Returns a scipy interpolated function object.
-    """
-   
-    # Define breakpoints using quantiles
-    breakpoints = np.quantile(x, np.linspace(0, 1, nbreaks+1))  # 10 pieces, 11 breakpoints
-    
-    # Calculate the mean y-values at these breakpoints
+    breakpoints = np.quantile(x, np.linspace(0, 1, nbreaks + 1))
+
     x_piecewise = []
     y_piecewise = []
     for i in range(len(breakpoints) - 1):
-        mask = (x >= breakpoints[i]) & (x < breakpoints[i+1])
-        x_piecewise.append(np.mean(x[mask]))  # Mean x in this interval
-        y_piecewise.append(np.mean(y[mask]))  # Mean y in this interval
-    
-    # Set up piecewise linear interpolation with extrapolation
+        mask = (x >= breakpoints[i]) & (x < breakpoints[i + 1])
+        if not np.any(mask):
+            continue  # skip empty bin
+        x_piecewise.append(np.mean(x[mask]))
+        y_piecewise.append(np.mean(y[mask]))
+
+    x_piecewise = np.asarray(x_piecewise)
+    y_piecewise = np.asarray(y_piecewise)
+
     piecewise_model = interp1d(
-        x_piecewise, y_piecewise, kind="linear", bounds_error=False, fill_value="extrapolate"
+        x_piecewise,
+        y_piecewise,
+        kind="linear",
+        bounds_error=False,
+        fill_value="extrapolate",
     )
     
     # Generate fitted y values for the actual x values
@@ -99,8 +103,12 @@ c_to_e = linear_interpolator(c, e, 100)
 
 ## Store as pickle
 with open(DataPaths.elev_area_storage_pickle, "wb") as file:
-    models = pickle.dump({'elevation_to_area': e_to_a,
-                          'area_to_elevation': a_to_e,
-                          'elevation_to_capacity': e_to_c,
-                          'capacity_to_elevation': c_to_e}, file)
-
+    pickle.dump(
+        {
+            "elevation_to_area": e_to_a,
+            "area_to_elevation": a_to_e,
+            "elevation_to_capacity": e_to_c,
+            "capacity_to_elevation": c_to_e,
+        },
+        file,
+    )

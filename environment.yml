@@ -4,6 +4,7 @@ channels:
   - conda-forge    # everything else
 dependencies:
   - python=3.10
+  - scikit-learn
   - numpy
   - pandas
   - pyarrow        # pandas.read_parquet() support
