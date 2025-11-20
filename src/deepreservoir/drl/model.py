@@ -428,6 +428,7 @@ class DRLModel:
             n_steps=n_steps,
             batch_size=batch_size,
             n_epochs=n_epochs,
+            gamma=gamma,  # <-- this was missing
         )
 
         best_dir = self.logdir / "best"

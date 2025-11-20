@@ -1,0 +1,26 @@
+total_timesteps (required for learn)
+How many environment steps to run in total during training (summed over all episodes). 
+This is the only thing you absolutely must set for SB3.
+
+n_steps (optional; PPO-specific)
+Number of steps per rollout per environment before doing a policy update (the “chunk size” PPO collects for advantage estimation). 
+Larger values = less frequent but longer updates; SB3 default is 2048.
+
+batch_size (optional)
+Minibatch size used by the optimizer when training on each rollout; SB3 shuffles the n_steps * n_envs transitions 
+and breaks them into batches of this size (default 64). You normally want batch_size <= n_steps * n_envs, often choosing a divisor of n_steps * n_envs.
+
+n_epochs (optional)
+How many passes PPO makes over the collected rollout per update (default 10). 
+Higher → more optimization on the same data (can help sample efficiency, but too high can overfit/unstabilize).
+
+n_episodes (not a direct hyperparam)
+This is implied by total_timesteps and your environment’s episode length: roughly
+
+n_episodes
+≈
+total_timesteps
+/
+episode_length
+n_episodes≈total_timesteps/episode_length.
+To “tune” it, you change either total_timesteps or how long your episodes are (via env logic like episode_length), not a separate argument to PPO.
