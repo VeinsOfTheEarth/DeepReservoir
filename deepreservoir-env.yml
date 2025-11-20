@@ -1,0 +1,24 @@
+name: deepreservoir
+channels:
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+  - jschwenk
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - pyarrow
+  - scipy
+  - matplotlib
+  - pyyaml
+  - gymnasium
+  - stable-baselines3
+  - pytorch
+  - cpuonly
+  - tensorboard
+  - tqdm
+  - pip
+  - scikit-learn
+prefix: C:\Users\318596\AppData\Local\miniconda3\envs\deepreservoir
