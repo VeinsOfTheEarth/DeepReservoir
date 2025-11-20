@@ -1,2 +1,9 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Packaging metadata
+*.egg-info/
+
+# Exports
 /runs/
-*.pyc
