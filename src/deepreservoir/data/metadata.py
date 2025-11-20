@@ -25,6 +25,11 @@ class Metadata:
     tables: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     model_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # internal cache for flattened paths
+    _paths_index: Dict[str, Path] = field(
+        default_factory=dict, init=False, repr=False
+    )
+
     def _abs(self, p: Path | str) -> Path:
         p = p if isinstance(p, Path) else Path(p)
         return p if p.is_absolute() else (self.base_dir / p)
@@ -33,7 +38,82 @@ class Metadata:
         for group in (self.daily_series, self.continuous_series, self.tables, self.model_params):
             for _, cfg in group.items():
                 cfg["path"] = self._abs(cfg["path"])
+        # clear cache since underlying paths changed
+        self._paths_index.clear()
         return self
+
+    # --- convenience helpers -------------------------------------------------
+    def _iter_groups(self):
+        """Yield (prefix, group_dict) for building a flat index."""
+        yield "daily", self.daily_series
+        yield "continuous", self.continuous_series
+        yield "tables", self.tables
+        yield "params", self.model_params
+
+    def build_paths_index(self, overwrite: bool = False) -> Dict[str, Path]:
+        """
+        Build or return a flattened mapping of name → Path.
+
+        Keys look like:
+          - 'daily.reservoir'
+          - 'continuous.sj_farmington'
+          - 'tables.elev_area_storage_data'
+          - 'params.niip_demand_spline_pkl'
+        """
+        if self._paths_index and not overwrite:
+            return self._paths_index
+
+        idx: Dict[str, Path] = {}
+        for prefix, group in self._iter_groups():
+            for name, cfg in group.items():
+                p = cfg.get("path")
+                if p is None:
+                    continue
+                key = f"{prefix}.{name}"
+                idx[key] = p
+
+        self._paths_index = idx
+        return idx
+
+    @property
+    def paths(self) -> Dict[str, Path]:
+        """
+        Flattened view of all known paths.
+
+        Example:
+            m = project_metadata()
+            m.paths["daily.reservoir"]
+            m.paths["params.niip_demand_spline_pkl"]
+        """
+        return self.build_paths_index()
+
+    def path(self, key: str) -> Path:
+        """
+        Get a Path by name, with or without prefix.
+
+        Examples:
+            m.path("params.niip_demand_spline_pkl")
+            m.path("niip_demand_spline_pkl")  # works if unique
+
+        Raises KeyError if missing or ambiguous.
+        """
+        idx = self.build_paths_index()
+
+        # 1) exact key first (e.g., 'params.niip_demand_spline_pkl')
+        if key in idx:
+            return idx[key]
+
+        # 2) allow bare names (e.g., 'niip_demand_spline_pkl')
+        matches = [k for k in idx if k.split(".", 1)[1] == key]
+        if not matches:
+            raise KeyError(f"No path named '{key}' in metadata.paths")
+        if len(matches) > 1:
+            raise KeyError(
+                f"Ambiguous key '{key}'. Matches: {matches}. "
+                "Use a fully-qualified key like 'daily.reservoir'."
+            )
+        return idx[matches[0]]
+
 
 # Rename of former "build_scaffold" → descriptive:
 def project_metadata() -> Metadata:
@@ -250,7 +330,7 @@ def project_metadata() -> Metadata:
 
     # Non-time tables (E–A–S relationship, ...)
     m.tables = {
-        "eas": {
+        "elev_area_storage_data": {
             "path": "data/elevation_area_storage_relationships/elevation_storage_area_2019.csv",
             "reader": "csv",
             "index": {"name": None, "format": None},  # do not parse a datetime index
@@ -263,19 +343,23 @@ def project_metadata() -> Metadata:
         },
     }
 
-        # Model parameter files (pickles, etc.)
+    # Model parameter files (pickles, etc.)
     m.model_params = {
         "hydropower_eta": {
             "path": "data/hydropower/hydropower_parameters.pkl",
             "kind": "pickle",
             "description": "Global efficiency eta for Navajo hydropower model",
         },
-        "elev_area_storage": {
-            "path": "data\elevation_area_storage_relationships\2019_elevation_area_capacity.pkl",
+        "elev_area_storage_pickle": {
+            "path": "data/elevation_area_storage_relationships/2019_elevation_area_capacity.pkl",
+            "kind": "pickle",
+            "description": "Piecewise linear E–A–S interpolators based on 2019 data",
+        },
+        "niip_demand_spline_pkl": {
+            "path": "data/niip/niip_demand_spline.pkl",
             "kind": "pickle",
             "description": "Piecewise linear E–A–S interpolators based on 2019 data",
         },
     }
-
 
     return m.resolve_paths()

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Dict, Any, List, Tuple, Optional
+from typing import Callable, Dict, Any, List, Tuple, Optional, Mapping
 
 import numpy as np
 import pandas as pd
+
+from deepreservoir.define_env.niip.niip_demand import niip_daily_demand
 
 
 # ---------------------------------------------------------------------
@@ -45,6 +47,7 @@ OBJECTIVES = [
     "flooding",
     "hydropower",
     "niip",
+    "physics",
 ]
 
 # OBJECTIVE -> { variant_name -> reward_fn }
@@ -84,6 +87,32 @@ class RewardComponent:
         # unique identifier, useful for logging
         return f"{self.objective}.{self.variant}"
 
+@dataclass
+class RewardDetail:
+    total: float
+    components: Dict[str, float]   # e.g. {"niip": -0.3, "esa_min_flow": 1.0}
+
+
+class MultiObjectiveReward:
+    def __init__(
+        self,
+        rewards: Mapping[str, RewardFn],
+        weights: Mapping[str, float] | None = None,
+    ):
+        # names are human labels like "niip", "esa_min_flow"
+        self.rewards = dict(rewards)
+        self.weights = weights or {name: 1.0 for name in rewards}
+
+    def __call__(self, ctx: "RewardContext") -> RewardDetail:
+        components: dict[str, float] = {}
+        total = 0.0
+
+        for name, fn in self.rewards.items():
+            val = float(fn(ctx))
+            components[name] = val
+            total += self.weights.get(name, 1.0) * val
+
+        return RewardDetail(total=total, components=components)
 
 class CompositeReward:
     """
@@ -106,7 +135,6 @@ class CompositeReward:
             total += weighted
 
         return total, breakdown
-
 
 # ---------------------------------------------------------------------
 # Building a composite from a user spec
@@ -165,7 +193,7 @@ def parse_objective_spec(spec_str: str) -> Dict[str, str]:
     Format:
         "dam_safety:band,esa_min_flow:shortage,hydropower:baseline,niip:deficit"
 
-    No weights here (you can add a separate `--weights` arg later if you want).
+    No weights here (can add a separate `--weights` arg later if wanted).
     """
     spec: Dict[str, str] = {}
     if not spec_str:
@@ -219,32 +247,89 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
 
     return float(r)
 
+
+@register_reward("niip", "baseline")
+def niip_baseline(ctx: RewardContext) -> float:
+    """
+    NIIP baseline reward: penalize irrigation shortage.
+
+    Logic:
+      - Only active during DOY 50–300 (NIIP demand season).
+      - Let D = daily NIIP demand [cfs], R = NIIP diversion release [cfs].
+      - If R >= D  → reward = 1.0
+      - Else       → reward = R / D  (in [0, 1))
+      - Outside doy 50–300 → reward = 0.0
+    """
+    # Use the context date to get day-of-year
+    doy = ctx.date.timetuple().tm_yday
+
+    # Outside demand period: no NIIP reward/penalty
+    if not (50 <= doy <= 300):
+        return 0.0
+
+    # Demand in cfs from spline
+    demand_cfs = float(niip_daily_demand(doy))
+    if demand_cfs <= 0.0:
+        # No demand today → nothing to reward
+        return 0.0
+
+    # NIIP release in cfs (from env.step info)
+    niip_release_cfs = float(ctx.info["niip_release_cfs"])
+
+    if niip_release_cfs >= demand_cfs:
+        return 1.0
+    else:
+        # Fraction of demand that was actually met
+        return max(0.0, niip_release_cfs / demand_cfs)
+
+
 @register_reward("esa_min_flow", "baseline")
 def esa_min_flow_baseline(ctx: RewardContext) -> float:
     """
-    Penalize violation of ESA minimum flow targets.
+    ESA minimum flow reward.
 
-    TODO: implement using flow at critical gages in ctx.info.
+    +1 if (Animas at Farmington + San Juan release) >= 500 cfs, else 0.
     """
-    raise NotImplementedError
+    row = ctx.info["raw_forcings"]  # pd.Series from data_raw
+    animas_cfs = float(row["animas_farmington_q_cfs"])
 
+    sanjuan_release_cfs = float(ctx.info["sanjuan_release_cfs"])
 
-@register_reward("esa_spring_peak_release", "baseline")
-def esa_spring_peak_baseline(ctx: RewardContext) -> float:
-    """
-    Reward/penalize how well releases match ESA spring peak hydrograph.
+    total_flow_cfs = animas_cfs + sanjuan_release_cfs # SJ @ Farmington is approximated by this summation that's based on Agent's actions
 
-    TODO: implement (likely uses multi-day context, but start with per-step).
-    """
-    raise NotImplementedError
+    return 1.0 if total_flow_cfs >= 500.0 else 0.0
 
 
 @register_reward("flooding", "baseline")
 def flooding_baseline(ctx: RewardContext) -> float:
     """
-    Penalize flows above bankfull or flood thresholds at downstream gages.
+    Flooding baseline reward with two components:
+
+      1. Same-day San Juan @ Farmington flow:
+         Q0 = sj_at_farmington_cfs = Animas + San Juan release
+         -> +1 if Q0 < 5,000 cfs, else 0.
+
+      2. Two-day-lagged flow:
+         Qlag2 = sj_at_farmington_lag2_cfs (if available)
+         -> +1 if Qlag2 < 12,000 cfs, else 0.
+         (If lag-2 is not yet available early in the episode, we treat it as safe.)
+
+    Total reward = average of the two components (0, 0.5, or 1.0).
     """
-    raise NotImplementedError
+    q0 = float(ctx.info["sj_at_farmington_cfs"])
+    qlag2 = ctx.info.get("sj_at_farmington_lag2_cfs", None)
+
+    # Component 1: same-day threshold
+    c1 = 1.0 if q0 < 5000.0 else 0.0
+
+    # Component 2: lag-2 threshold; if we don't have lag-2 yet, treat as safe
+    if qlag2 is None:
+        c2 = 1.0
+    else:
+        c2 = 1.0 if float(qlag2) < 12000.0 else 0.0
+
+    # Average so the objective stays in [0, 1]
+    return 0.5 * (c1 + c2)
 
 
 @register_reward("hydropower", "baseline")
@@ -269,10 +354,18 @@ def hydropower_baseline(ctx: RewardContext) -> float:
     else:
         return (hydropower_mwh - min_mwh) / (max_mwh - min_mwh)
 
+@register_reward("physics", "scale_penalty")
+def physics_scale_penalty(ctx: RewardContext) -> float:
+    # Punish asking for more water than exists
+    penalty = float(ctx.info.get("release_scale_penalty", 0.0))
+    return -0.5 * penalty  # tune weight as you like
 
-@register_reward("niip", "baseline")
-def niip_baseline(ctx: RewardContext) -> float:
+
+@register_reward("esa_spring_peak_release", "baseline")
+def esa_spring_peak_baseline(ctx: RewardContext) -> float:
     """
-    Penalize irrigation shortage (NIIP demand not met).
+    Reward/penalize how well releases match ESA spring peak hydrograph.
+
+    TODO: implement (likely uses multi-day context, but start with per-step).
     """
     raise NotImplementedError

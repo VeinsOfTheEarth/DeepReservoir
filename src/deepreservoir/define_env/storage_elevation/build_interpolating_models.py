@@ -12,8 +12,11 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from sklearn.metrics import r2_score
 import pickle
-from deepreservoir.data.loader import DataPaths
+from deepreservoir.data.metadata import project_metadata
 
+m  = project_metadata()
+path_eas_pickle = m.path("elev_area_storage_data")
+path_eas_csv = m.path('elev_area_storage_pickle')
 
 def linear_interpolator(x, y, nbreaks, plot=True):
     x = np.asarray(x)
@@ -86,7 +89,7 @@ def linear_interpolator(x, y, nbreaks, plot=True):
     return piecewise_model
 
 # Load data
-df = pd.read_csv(DataPaths.elev_area_storage_csv)
+df = pd.read_csv(path_eas_csv)
 
 # Extract values from the DataFrame
 e = df["Elevation (ft)"].values
@@ -102,7 +105,7 @@ e_to_c = linear_interpolator(e, c, 100)
 c_to_e = linear_interpolator(c, e, 100)
 
 ## Store as pickle
-with open(DataPaths.elev_area_storage_pickle, "wb") as file:
+with open(path_eas_pickle, "wb") as file:
     pickle.dump(
         {
             "elevation_to_area": e_to_a,

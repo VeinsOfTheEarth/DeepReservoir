@@ -1,13 +1,13 @@
-# Use:
-# from niip_demand import niip_daily_demand
-# doy = 100 # example
-# demand_in_cfs = niip_daily_demand(doy)
-
-from scipy.interpolate import UnivariateSpline
 import numpy as np
 import pickle
+from scipy.interpolate import UnivariateSpline
+from deepreservoir.data.metadata import project_metadata
 
-with open("niip_demand_spline.pkl", "rb") as f:
+m = project_metadata()
+niip_pickle = m.path("niip_demand_spline_pkl")
+
+
+with open(niip_pickle, "rb") as f:
     spline_data = pickle.load(f)
 
 spline = UnivariateSpline._from_tck((spline_data["t"], spline_data["c"], spline_data["k"]))

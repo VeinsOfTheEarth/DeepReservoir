@@ -2,10 +2,13 @@ import pickle
 import numpy as np
 import pandas as pd
 from gymnasium import Env
+from collections import deque, defaultdict
 from gymnasium.spaces import Box
-from deepreservoir.data.loader import DataPaths
 from deepreservoir.drl.rewards import RewardContext
+from deepreservoir.data.metadata import project_metadata
 from deepreservoir.define_env.hydropower_model import navajo_power_generation_model
+
+m  = project_metadata()
 
 # 1 cfs sustained over a day to acre-feet
 CFS_TO_AF_PER_DAY = 1.98211
@@ -111,6 +114,9 @@ class NavajoReservoirEnv(Env):
         #  action[1] -> niip_release_cfs
         self.action_space = Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
+        # Create storage for computing 2-day lagged discharge at Bluff
+        self.sj_at_farmington_history = deque(maxlen=3)
+
         # OBSERVATION SPACE: pick normalized columns you want agent to see
         obs_cols = []
         for col in [
@@ -132,7 +138,7 @@ class NavajoReservoirEnv(Env):
         )
 
         # Load elevation–area–capacity models built within build_interpolating_models.py
-        with open(DataPaths.elev_area_storage_pickle, "rb") as f:
+        with open(m.path('elev_area_storage_pickle'), "rb") as f:
             elev_models = pickle.load(f)
 
         # Interpolators built from CSV:
@@ -148,6 +154,11 @@ class NavajoReservoirEnv(Env):
 
         # Optional bookkeeping
         self.last_reward_breakdown: dict[str, float] | None = None
+
+        # Episode-level reward tracking (for diagnostics)
+        # keys match CompositeReward keys, e.g. "niip.baseline"
+        self._episode_reward_sums: dict[str, float] = defaultdict(float)
+        self._episode_total_reward: float = 0.0
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -207,8 +218,14 @@ class NavajoReservoirEnv(Env):
         self.storage_af = float(self.data_raw.iloc[self.start_idx]["storage_af"])
 
         self.last_reward_breakdown = None
+        self.sj_at_farmington_history.clear()
+
+        # Reset episode reward tracking
+        self._episode_reward_sums = defaultdict(float)
+        self._episode_total_reward = 0.0
 
         obs = self._build_obs()
+
         return obs, {}
 
     def step(self, action):
@@ -235,15 +252,58 @@ class NavajoReservoirEnv(Env):
             self.max_release_cfs - self.min_release_cfs
         )
 
-        total_release_cfs = sanjuan_release_cfs + niip_release_cfs
-        total_release_af = total_release_cfs * CFS_TO_AF_PER_DAY
+        requested_total_release_cfs = sanjuan_release_cfs + niip_release_cfs
 
-        # Exogenous forcings from raw data at current step
-        row_raw = self.data_raw.iloc[global_idx]
+        # --- MASS BALANCE PIECES ---
+        row_raw   = self.data_raw.iloc[global_idx]
         inflow_cfs = float(row_raw["inflow_cfs"])
-        inflow_af = inflow_cfs * CFS_TO_AF_PER_DAY
+        inflow_af  = inflow_cfs * CFS_TO_AF_PER_DAY
+        evap_af    = float(row_raw["evap_af"])
 
-        evap_af = float(row_raw["evap_af"])
+        # Physically available volume this day
+        available_af = max(self.storage_af + inflow_af - evap_af, 0.0)
+        max_total_release_cfs_phys = available_af / CFS_TO_AF_PER_DAY
+
+        # # Also respect your engineered cap
+        # max_total_release_cfs_phys = min(max_total_release_cfs_phys,
+        #                                 2.0 * self.max_release_cfs)
+
+        # --- PROJECT REQUESTED RELEASE INTO FEASIBLE SET ---
+        scale_penalty = 0.0
+        if requested_total_release_cfs > max_total_release_cfs_phys:
+            if requested_total_release_cfs > 0.0:
+                scale = max_total_release_cfs_phys / requested_total_release_cfs
+            else:
+                scale = 0.0
+            sanjuan_release_cfs *= scale
+            niip_release_cfs    *= scale
+            total_release_cfs   = sanjuan_release_cfs + niip_release_cfs
+
+            # Optional: how “bad” was the request?
+            scale_penalty = (requested_total_release_cfs - total_release_cfs) / (
+                2.0 * self.max_release_cfs + 1e-6
+            )
+        else:
+            total_release_cfs = requested_total_release_cfs
+
+        total_release_af = total_release_cfs * CFS_TO_AF_PER_DAY
+        new_storage_af   = self.storage_af + inflow_af - evap_af - total_release_af
+        new_storage_af   = max(new_storage_af, 0.0)
+
+
+        # Animas at Farmington [cfs]
+        animas_cfs = float(row_raw["animas_farmington_q_cfs"])
+
+        # San Juan @ Farmington = Animas + mainstem release [cfs]
+        sj_at_farm_cfs = animas_cfs + sanjuan_release_cfs
+
+        # Update history for lag-2
+        self.sj_at_farmington_history.append(sj_at_farm_cfs)
+        if len(self.sj_at_farmington_history) >= 3:
+            sj_at_farm_lag2_cfs = self.sj_at_farmington_history[-3]  # two days ago
+        else:
+            sj_at_farm_lag2_cfs = None
+
 
         # --- Mass balance update in AF ---
         new_storage_af = self.storage_af + inflow_af - evap_af - total_release_af
@@ -256,7 +316,6 @@ class NavajoReservoirEnv(Env):
         hydropower_mwh = navajo_power_generation_model(
             cfs_values=sanjuan_release_cfs,
             elevation_ft=new_elev_ft,
-            eta_eff=self.eta_eff,  # may be None → uses parameters.pkl
         )
 
         # Build info dict for rewards/logging
@@ -272,10 +331,13 @@ class NavajoReservoirEnv(Env):
             "total_release_cfs": total_release_cfs,
             "total_release_af": total_release_af,
             "elev_ft": new_elev_ft,
-            "hydropower_mwh": float(hydropower_mwh),  # <-- what the reward uses
+            "sj_at_farmington_cfs": sj_at_farm_cfs,
+            "sj_at_farmington_lag2_cfs": sj_at_farm_lag2_cfs,
             "min_storage_af": self.min_storage_af,
             "max_storage_af": self.max_storage_af,
             "raw_forcings": row_raw,
+            "hydropower_mwh" : hydropower_mwh,
+            "release_scale_penalty": scale_penalty,
         }
 
         # Advance internal state
@@ -308,6 +370,18 @@ class NavajoReservoirEnv(Env):
         total_reward, breakdown = self.reward_fn(ctx)
         self.last_reward_breakdown = breakdown
 
-        return next_obs, float(total_reward), terminated, truncated, {
-            "reward_components": breakdown
-        }
+        # --- Episode-level reward bookkeeping ---
+        self._episode_total_reward += float(total_reward)
+        for key, val in breakdown.items():
+            # breakdown already includes weights from CompositeReward
+            self._episode_reward_sums[key] += float(val)
+
+        # Expose everything via info for logging/diagnostics
+        info["reward_components_step"] = breakdown                     # this step
+        info["reward_components_episode"] = dict(self._episode_reward_sums)  # cumulative
+        info["episode_total_reward"] = self._episode_total_reward
+
+        # Backwards-compatible alias if you were already using this
+        info["reward_components"] = breakdown
+
+        return next_obs, float(total_reward), terminated, truncated, info

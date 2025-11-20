@@ -5,12 +5,14 @@ import pickle
 from pathlib import Path
 from typing import Optional, Union, Sequence
 from scipy.interpolate import interp1d
+from deepreservoir.data.metadata import project_metadata
+
+m = project_metadata()
+path_model_params: Path = m.path("hydropower_eta")
 
 # -------------------------------------------------------------------
 # Load single-eta parameter from pickle
 # -------------------------------------------------------------------
-path_model_params = Path(r"X:\Research\DeepReservoir\Hydropower\parameters.pkl")
-
 def _load_eta_from_pickle(pkl_path: Path) -> float:
     with open(pkl_path, "rb") as f:
         obj = pickle.load(f)
