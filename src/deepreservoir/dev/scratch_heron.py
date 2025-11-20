@@ -49,3 +49,6 @@ drl_plot.save(fig, m.logdir / "episode_mean_rewards.png")
 # Release timeseries
 fig, ax = drl_plot.plot_release_timeseries(df_test)
 drl_plot.save(fig, m.logdir / "release_timeseries.png")
+
+
+
