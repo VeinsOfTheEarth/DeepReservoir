@@ -21,7 +21,7 @@ m.train(
     batch_size=4096,
     n_epochs=400,
     track_reward_components=True,
-    gamma = 0.999
+    gamma = 0.9995
 )
 
 # m.load_model("last_model")

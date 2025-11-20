@@ -225,27 +225,26 @@ def dam_safety_baseline(ctx: RewardContext) -> float:
 
 @register_reward("dam_safety", "storage_band")
 def dam_safety_storage_band(ctx: RewardContext) -> float:
-    """
-    Storage-based dam safety reward.
+    storage = ctx.info["storage_af"]
+    s_min   = 500_000
+    s_max   = 1_731_750
+    target  = 0.5 * (s_min + s_max)
 
-    - If storage is within [min_storage_af, max_storage_af]:
-        r = 1 - |S - S_target| / (S_max - S_min)
-      where S_target is the midpoint of the band.
-    - Otherwise:
-        r = -1
-    """
-    storage = ctx.info["storage_af"]         # current storage [AF]
-    s_min   = 500000     # safe min [AF]
-    s_max   = 1731750    # safe max [AF]
-    target_storage = (s_min + s_max)/2
+    # Define a symmetric scale so "far" from target is -1, near target is +1
+    span = (s_max - s_min) / 2  # half-width of band
 
-    if s_min <= storage <= s_max:
-        target_storage = 0.5 * (s_max + s_min)
-        r = 1.0 - abs(storage - target_storage) / (s_max - s_min)
-    else:
-        r = -1.0
+    # Relative deviation from target; 0 at target, ±1 at the band edges
+    x = (storage - target) / span
 
-    return float(3*r)
+    # Parabolic shape: 1 at target, 0 at band edges, negative outside
+    r = 1.0 - x**2
+
+    # Clip to [-1, 1] so super-extreme values don't blow up
+    r = float(np.clip(r, -1.0, 1.0))
+
+    # Make it matter
+    r = 10.0 * r
+    return r
 
 
 @register_reward("niip", "baseline")
