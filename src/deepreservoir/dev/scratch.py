@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 from deepreservoir.drl import model as drl_model
 from importlib import reload
 
-reward_spec = "dam_safety:storage_band,esa_min_flow:baseline,flooding:baseline,niip:baseline,hydropower:baseline,physics:scale_penalty"
+# reward_spec = "dam_safety:storage_band,esa_min_flow:baseline,flooding:baseline,niip:baseline,hydropower:baseline,physics:scale_penalty"
+reward_spec = "dam_safety:storage_band,physics:scale_penalty"
 run_dir = Path("runs/debug_ipy")
 
 m = drl_model.DRLModel(
@@ -15,11 +16,11 @@ m = drl_model.DRLModel(
 )
 
 m.train(
-    total_timesteps=50000,
+    total_timesteps=200_000,
     device="cpu",
-    n_steps=4096,
-    batch_size=4096,
-    n_epochs=400,
+    n_steps=2048,
+    batch_size=256,
+    n_epochs=10,
     track_reward_components=True,
     gamma = 0.9995
 )

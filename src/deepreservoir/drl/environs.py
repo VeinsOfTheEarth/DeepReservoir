@@ -206,26 +206,32 @@ class NavajoReservoirEnv(Env):
     # ------------------------------------------------------------------ #
     # Gym API
     # ------------------------------------------------------------------ #
-
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        # For now, always start at index 0; we can randomize episode starts later
-        self.start_idx = 0
+
+        # Decide where this episode starts
+        if self.is_eval or self.episode_length is None:
+            # Evaluation: always start from the beginning, full series
+            self.start_idx = 0
+            self.max_steps = self.n_steps
+        else:
+            # Training: random window of length episode_length
+            max_start = self.n_steps - self.episode_length
+            # self.np_random is provided by gymnasium after super().reset(seed)
+            self.start_idx = int(self.np_random.integers(0, max_start + 1))
+            self.max_steps = self.episode_length
+
         self.t = 0
         self.episode_step_count = 0
 
-        # Initialize storage from raw data at start
+        # Initialize storage at the chosen start index
         self.storage_af = float(self.data_raw.iloc[self.start_idx]["storage_af"])
 
+        # any other per-episode state
         self.last_reward_breakdown = None
         self.sj_at_farmington_history.clear()
 
-        # Reset episode reward tracking
-        self._episode_reward_sums = defaultdict(float)
-        self._episode_total_reward = 0.0
-
         obs = self._build_obs()
-
         return obs, {}
 
     def step(self, action):
