@@ -245,7 +245,7 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     else:
         r = -1.0
 
-    return float(r)
+    return float(3*r)
 
 
 @register_reward("niip", "baseline")
@@ -358,7 +358,7 @@ def hydropower_baseline(ctx: RewardContext) -> float:
 def physics_scale_penalty(ctx: RewardContext) -> float:
     # Punish asking for more water than exists
     penalty = float(ctx.info.get("release_scale_penalty", 0.0))
-    return -0.5 * penalty  # tune weight as you like
+    return -1 * penalty  # tune weight as you like
 
 
 @register_reward("esa_spring_peak_release", "baseline")

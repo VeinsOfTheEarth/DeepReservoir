@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from deepreservoir.drl import model as drl_model
 from importlib import reload
 
-reward_spec = "dam_safety:baseline,esa_min_flow:baseline,flooding:baseline,niip:baseline,hydropower:baseline,physics:scale_penalty"
+reward_spec = "dam_safety:storage_band,esa_min_flow:baseline,flooding:baseline,niip:baseline,hydropower:baseline,physics:scale_penalty"
 run_dir = Path("runs/debug_ipy")
 
 m = drl_model.DRLModel(
@@ -15,12 +15,13 @@ m = drl_model.DRLModel(
 )
 
 m.train(
-    total_timesteps=8_000_000,
+    total_timesteps=50000,
     device="cpu",
     n_steps=4096,
     batch_size=4096,
     n_epochs=400,
     track_reward_components=True,
+    gamma = 0.999
 )
 
 # m.load_model("last_model")
@@ -39,7 +40,9 @@ fig, ax, ax2 = drl_plot.plot_storage_timeseries(df_test)
 drl_plot.save(fig, m.logdir / "storage_timeseries.png")
 
 # Episode mean rewards
-df_ep = m.episode_reward_components_.sort_values("episode_idx")
+cb = m._reward_components_cb
+df_ep = pd.DataFrame(cb.episode_history)
+df_ep = df_ep.sort_values("episode_idx").set_index("episode_idx")
 fig, ax = drl_plot.plot_episode_mean_rewards(df_ep)
 drl_plot.save(fig, m.logdir / "episode_mean_rewards.png")
 

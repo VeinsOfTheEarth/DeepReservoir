@@ -78,6 +78,7 @@ def build_agent(
     n_steps: int | None = None,
     batch_size: int | None = None,
     n_epochs: int | None = None,
+    gamma: float | None = None,
 ) -> PPO:
     """
     Construct the SB3 agent for a given environment.
@@ -98,6 +99,9 @@ def build_agent(
         ppo_kwargs["batch_size"] = batch_size
     if n_epochs is not None:
         ppo_kwargs["n_epochs"] = n_epochs
+    if gamma is not None:
+        ppo_kwargs["gamma"] = gamma
+
 
     return PPO("MlpPolicy", env, **ppo_kwargs)
 
@@ -405,6 +409,8 @@ class DRLModel:
         batch_size: int | None = None,
         n_epochs: int | None = None,
         track_reward_components: bool = True,
+        gamma: float | None = None,
+
     ) -> None:
         """
         Build the agent (with the given hyperparams) and train it.
