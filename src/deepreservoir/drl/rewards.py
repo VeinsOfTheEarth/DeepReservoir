@@ -357,7 +357,7 @@ def hydropower_baseline(ctx: RewardContext) -> float:
 def physics_scale_penalty(ctx: RewardContext) -> float:
     # Punish asking for more water than exists
     penalty = float(ctx.info.get("release_scale_penalty", 0.0))
-    return -1 * penalty  # tune weight as you like
+    return -5 * penalty  # tune weight as you like
 
 
 @register_reward("esa_spring_peak_release", "baseline")

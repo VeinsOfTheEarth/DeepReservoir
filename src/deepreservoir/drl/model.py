@@ -20,11 +20,14 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback, CallbackList
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.monitor import Monitor
 
 from deepreservoir.data import loader
 from deepreservoir.drl import helpers
 from deepreservoir.drl import rewards as drl_rewards
 from deepreservoir.drl.environs import NavajoReservoirEnv
+from deepreservoir.define_env.hydropower_model import navajo_power_generation_model
 
 
 # ---------------------------------------------------------------------
@@ -142,6 +145,38 @@ def make_env(
     return env
 
 
+def make_vec_env(
+    *,
+    data_raw: pd.DataFrame,
+    data_norm: pd.DataFrame,
+    norm_stats: pd.DataFrame,
+    reward_spec_str: str,
+    n_envs: int,
+    is_eval: bool = False,
+    use_subproc: bool = False,
+):
+    """
+    Build a VecEnv (Dummy or Subproc) of NavajoReservoirEnv instances.
+
+    For training, set is_eval=False; for eval you usually just want 1 env
+    and can skip this helper.
+    """
+    vec_cls = SubprocVecEnv if use_subproc else DummyVecEnv
+
+    def _make_single_env():
+        # Wrap your existing make_env
+        return make_env(
+            data_raw=data_raw,
+            data_norm=data_norm,
+            norm_stats=norm_stats,
+            reward_spec_str=reward_spec_str,
+            is_eval=is_eval,
+        )
+
+    # SB3 expects a list of callables that each create an env
+    env_fns = [ _make_single_env for _ in range(n_envs) ]
+    return vec_cls(env_fns)
+
 # ---------------------------------------------------------------------
 # Evaluation helpers
 # ---------------------------------------------------------------------
@@ -195,8 +230,9 @@ def run_test_rollout(
             global_idx = start_idx + t
             date = eval_env.data_raw.index[global_idx]
 
+        # Agent storage + elevation
         storage_agent_af = float(eval_env.storage_af)
-        elev_ft = float(eval_env.capacity_to_elev(storage_agent_af))
+        elev_agent_ft = float(eval_env.capacity_to_elev(storage_agent_af))
 
         # --- action and env step ---
         action, _ = agent.predict(obs, deterministic=True)
@@ -208,25 +244,26 @@ def run_test_rollout(
             "date": pd.to_datetime(date),
             "reward": float(reward),
             "storage_agent_af": storage_agent_af,
-            "elev_ft": elev_ft,
+            "elev_ft": elev_agent_ft,          # agent elevation
         }
 
-        # reward components
+        # Reward components
         comps = info_step.get("reward_components", {})
         for key, val in comps.items():
             rec[f"rc_{key}"] = float(val)
 
-        # agent release from env info (total release in cfs)
-        if "total_release_cfs" in info_step:
-            rec["release_agent_cfs"] = float(info_step["total_release_cfs"])
-        if "sanjuan_release_cfs" in info_step:
-            rec["sanjuan_release_cfs"] = float(info_step["sanjuan_release_cfs"])
-        if "niip_release_cfs" in info_step:
-            rec["niip_release_cfs"] = float(info_step["niip_release_cfs"])
+        # Agent releases (from info)
+        sanjuan_rel_cfs = info_step.get("sanjuan_release_cfs", None)
+        total_rel_cfs = info_step.get("total_release_cfs", None)
+        if sanjuan_rel_cfs is not None:
+            rec["sanjuan_release_cfs"] = float(sanjuan_rel_cfs)
+        if total_rel_cfs is not None:
+            rec["release_agent_cfs"] = float(total_rel_cfs)
 
-        # historic data for that date
+        # Historic data for that date
         date_row = eval_env.data_raw.loc[rec["date"]]
-        # historic storage + a few other useful columns
+
+        # Historic storage + release, inflow, evap, etc.
         if "storage_af" in date_row.index:
             rec["storage_hist_af"] = float(date_row["storage_af"])
         for col in [
@@ -240,12 +277,32 @@ def run_test_rollout(
             if col in date_row.index:
                 rec[col] = float(date_row[col])
 
+        # --- Hydropower: agent & historic, using elevations already in hand ---
+        # Agent hydropower: use mainstem (San Juan) release + agent elevation
+        if sanjuan_rel_cfs is not None:
+            hp_agent = navajo_power_generation_model(
+                cfs_values=float(sanjuan_rel_cfs),
+                elevation_ft=elev_agent_ft,
+            )
+            rec["hydro_agent_mwh"] = float(hp_agent)
+
+        # Historic hydropower: use historic release + elevation from historic storage
+        if "storage_hist_af" in rec and "release_cfs" in rec:
+            elev_hist_ft = float(eval_env.capacity_to_elev(rec["storage_hist_af"]))
+            hp_hist = navajo_power_generation_model(
+                cfs_values=float(rec["release_cfs"]),
+                elevation_ft=elev_hist_ft,
+            )
+            rec["elev_hist_ft"] = elev_hist_ft
+            rec["hydro_hist_mwh"] = float(hp_hist)
+
         records.append(rec)
 
         obs = next_obs
         step += 1
         if done:
             break
+
 
     df = pd.DataFrame.from_records(records).set_index("date").sort_index()
     return df
@@ -351,17 +408,6 @@ def compute_test_metrics(df: pd.DataFrame) -> pd.DataFrame:
 # DRLModel class: single training entry point
 # ---------------------------------------------------------------------
 class DRLModel:
-    """
-    Thin wrapper around the core DRL training/eval for Navajo.
-
-    Handles:
-      - data loading / env construction
-      - agent construction
-      - training
-      - saving / loading the SB3 model
-      - test-period rollout, plots, and metrics
-    """
-
     def __init__(
         self,
         n_years_test: int,
@@ -371,6 +417,8 @@ class DRLModel:
         logdir: str | Path = "runs/debug",
         seed: int | None = None,
         device: str = "auto",
+        n_envs: int = 1,              # NEW
+        use_subproc_vec: bool = False # NEW
     ) -> None:
         self.n_years_test = n_years_test
         self.reward_spec = reward_spec
@@ -378,16 +426,34 @@ class DRLModel:
         self.logdir = Path(logdir)
         self.seed = seed
         self.device = device
+        self.n_envs = int(n_envs)
+        self.use_subproc_vec = bool(use_subproc_vec)
 
-        # Load data and build envs
+        # Load data
         self.datasets = load_datasets(n_years_test)
-        self.train_env = make_env(
-            data_raw=self.datasets["train_raw"],
-            data_norm=self.datasets["train_norm"],
-            norm_stats=self.datasets["norm_stats"],
-            reward_spec_str=self.reward_spec,
-            is_eval=False,
-        )
+
+        # TRAIN ENV: single or VecEnv
+        if self.n_envs == 1:
+            self.train_env = make_env(
+                data_raw=self.datasets["train_raw"],
+                data_norm=self.datasets["train_norm"],
+                norm_stats=self.datasets["norm_stats"],
+                reward_spec_str=self.reward_spec,
+                is_eval=False,
+            )
+            self.train_env = Monitor(self.train_env)
+        else:
+            self.train_env = make_vec_env(
+                data_raw=self.datasets["train_raw"],
+                data_norm=self.datasets["train_norm"],
+                norm_stats=self.datasets["norm_stats"],
+                reward_spec_str=self.reward_spec,
+                n_envs=self.n_envs,
+                is_eval=False,
+                use_subproc=self.use_subproc_vec,
+            )
+
+        # EVAL ENV: keep it single-env for now
         self.eval_env = make_env(
             data_raw=self.datasets["test_raw"],
             data_norm=self.datasets["test_norm"],
@@ -395,6 +461,9 @@ class DRLModel:
             reward_spec_str=self.reward_spec,
             is_eval=True,
         )
+        # Wrap in Monitor for correct eval metrics
+        self.eval_env = Monitor(self.eval_env)
+
 
         # Agent will be built in train() or load_model()
         self.agent: PPO | None = None

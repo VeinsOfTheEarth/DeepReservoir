@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Tuple
-
+import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.pyplot as plt
+from pathlib import Path
+
 
 # Global font (DejaVu is bundled with Matplotlib, so it’s safe/portable)
 FONT_FAMILY = "DejaVu Sans"
@@ -16,17 +18,23 @@ OBJECTIVE_COLOR_MAP = {
     "esa_min_flow": "#ff7f0e",  # orange
     "flooding":     "#2ca02c",  # green
     "niip":         "#d62728",  # red
-    "physics":      "#9467bd",  # purple (dedicated color)
+    "physics":      "#9467bd",  # purple 
 }
 
 FALLBACK_COLORS = [
-    "#9467bd",  # purple
     "#8c564b",  # brown
     "#e377c2",  # pink
     "#7f7f7f",  # grey
     "#bcbd22",  # olive
     "#17becf",  # teal
 ]
+
+# Colors for agent vs historic (tweak as you like)
+AGENT_COLOR = "#08519c"       # dark blue
+AGENT_FILL_COLOR = "#9ecae1"  # light blue
+
+HIST_COLOR = "#e6550d"        # dark orange
+HIST_FILL_COLOR = "#fdae6b"   # light orange
 
 def save(
     fig: plt.Figure,
@@ -336,3 +344,335 @@ def plot_release_timeseries(
 
     fig.tight_layout()
     return fig, ax
+
+
+
+def plot_storage_doy(
+    df: pd.DataFrame,
+    figsize: tuple[float, float] = (10, 4),
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot day-of-year storage (agent vs historic) using only complete years.
+
+    Uses:
+      - 'storage_hist_af'
+      - 'storage_agent_af'
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("df.index must be a DatetimeIndex for DOY plot.")
+
+    if "storage_hist_af" not in df.columns or "storage_agent_af" not in df.columns:
+        raise ValueError("df must contain 'storage_hist_af' and 'storage_agent_af'.")
+
+    # Only complete years for each series
+    hist_full = _select_full_years(df["storage_hist_af"].dropna())
+    agent_full = _select_full_years(df["storage_agent_af"].dropna())
+
+    hist_stats = _doy_stats(hist_full)
+    agent_stats = _doy_stats(agent_full)
+
+    doy = hist_stats.index.values  # 1..365
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Clean style
+    ax.grid(True, which="major", linestyle=":", alpha=0.6)
+    for spine in ("top",):
+        ax.spines[spine].set_visible(False)
+
+    ax.tick_params(labelsize=11)
+    ax.set_xlabel("Day of year", fontsize=13)
+    ax.set_ylabel("Storage [AF]", fontsize=13)
+
+    # --- Historic storage: orange ---
+    ax.fill_between(
+        doy,
+        hist_stats["min"],
+        hist_stats["max"],
+        color=HIST_FILL_COLOR,
+        alpha=0.10,
+        label="_nolegend_",
+    )
+    ax.fill_between(
+        doy,
+        hist_stats["q25"],
+        hist_stats["q75"],
+        color=HIST_FILL_COLOR,
+        alpha=0.25,
+        label="Historic IQR",
+    )
+    ax.plot(
+        doy,
+        hist_stats["median"],
+        color=HIST_COLOR,
+        linewidth=1.8,
+        label="Historic median",
+    )
+
+    # --- Agent storage: blue ---
+    ax.fill_between(
+        doy,
+        agent_stats["min"],
+        agent_stats["max"],
+        color=AGENT_FILL_COLOR,
+        alpha=0.10,
+        label="_nolegend_",
+    )
+    ax.fill_between(
+        doy,
+        agent_stats["q25"],
+        agent_stats["q75"],
+        color=AGENT_FILL_COLOR,
+        alpha=0.20,
+        label="Agent IQR",
+    )
+    ax.plot(
+        doy,
+        agent_stats["median"],
+        color=AGENT_COLOR,
+        linewidth=1.8,
+        label="Agent median",
+    )
+
+    ax.set_title("Day-of-year storage (complete years, test period)", fontsize=14)
+
+    leg = ax.legend(loc="best", frameon=True)
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_facecolor("white")
+
+    fig.tight_layout()
+    return fig, ax
+
+
+def _iter_full_year_traces(series: pd.Series):
+    """
+    Yield (year, x_doy, values) for each complete calendar year in series.
+    Feb 29 is dropped.
+    """
+    full = _select_full_years(series.dropna())
+    if full.empty:
+        return
+
+    for y in sorted(np.unique(full.index.year)):
+        s_y = full[full.index.year == y]
+        if s_y.empty:
+            continue
+        # Drop Feb 29
+        mask = ~((s_y.index.month == 2) & (s_y.index.day == 29))
+        s_y = s_y[mask]
+        x = s_y.index.dayofyear
+        yield y, x, s_y.values
+
+
+def plot_storage_doy_traces(
+    df: pd.DataFrame,
+    figsize: tuple[float, float] = (10, 4),
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot all storage trajectories (per year) for agent vs historic
+    on the same DOY axes.
+
+    Uses:
+      - 'storage_hist_af'
+      - 'storage_agent_af'
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("df.index must be a DatetimeIndex for DOY plot.")
+
+    if "storage_hist_af" not in df.columns or "storage_agent_af" not in df.columns:
+        raise ValueError("df must contain 'storage_hist_af' and 'storage_agent_af'.")
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Clean style
+    ax.grid(True, which="major", linestyle=":", alpha=0.6)
+    for spine in ("top",):
+        ax.spines[spine].set_visible(False)
+
+    ax.tick_params(labelsize=11)
+    ax.set_xlabel("Day of year", fontsize=13)
+    ax.set_ylabel("Storage [AF]", fontsize=13)
+
+    # Historic trajectories
+    first_hist = True
+    for y, x_doy, vals in _iter_full_year_traces(df["storage_hist_af"]):
+        label = "Historic (per year)" if first_hist else "_nolegend_"
+        ax.plot(
+            x_doy,
+            vals,
+            color=HIST_COLOR,
+            alpha=0.35,
+            linewidth=1.0,
+            label=label,
+        )
+        first_hist = False
+
+    # Agent trajectories
+    first_agent = True
+    for y, x_doy, vals in _iter_full_year_traces(df["storage_agent_af"]):
+        label = "Agent (per year)" if first_agent else "_nolegend_"
+        ax.plot(
+            x_doy,
+            vals,
+            color=AGENT_COLOR,
+            alpha=0.35,
+            linewidth=1.0,
+            label=label,
+        )
+        first_agent = False
+
+    ax.set_title("Day-of-year storage trajectories (complete years, test period)", fontsize=14)
+
+    leg = ax.legend(loc="best", frameon=True)
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_facecolor("white")
+
+    fig.tight_layout()
+    return fig, ax
+
+
+def _select_full_years(series: pd.Series) -> pd.Series:
+    """
+    Keep only years where the series has a complete calendar year
+    (Jan 1–Dec 31 with no missing days).
+    """
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError("Series index must be a DatetimeIndex.")
+
+    idx = series.index
+    years = np.unique(idx.year)
+    mask_keep = np.zeros(len(series), dtype=bool)
+
+    for y in years:
+        mask_y = (idx.year == y)
+        s_y = series[mask_y]
+        if s_y.empty:
+            continue
+        first = s_y.index.min().normalize()
+        last = s_y.index.max().normalize()
+        expected_days = (last - first).days + 1
+        # require full calendar year with no gaps
+        if (
+            first == pd.Timestamp(y, 1, 1)
+            and last == pd.Timestamp(y, 12, 31)
+            and len(s_y) == expected_days
+        ):
+            mask_keep |= mask_y
+
+    return series[mask_keep]
+
+
+def _doy_stats(series: pd.Series) -> pd.DataFrame:
+    """
+    Compute day-of-year stats (min, 25%, median, 75%, max) for a series.
+
+    Drops Feb 29 so all years have 365 days.
+    """
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError("Series index must be a DatetimeIndex.")
+
+    # Drop Feb 29 (leap day)
+    mask = ~((series.index.month == 2) & (series.index.day == 29))
+    s = series[mask]
+
+    grouped = s.groupby(s.index.dayofyear)
+    stats = pd.DataFrame({
+        "min": grouped.min(),
+        "q25": grouped.quantile(0.25),
+        "median": grouped.median(),
+        "q75": grouped.quantile(0.75),
+        "max": grouped.max(),
+    })
+    return stats  # index = day-of-year (1..365)
+
+
+def plot_hydropower_doy(
+    df: pd.DataFrame,
+    figsize: tuple[float, float] = (10, 4),
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot day-of-year hydropower (agent vs historic) using precomputed columns:
+      - 'hydro_hist_mwh'
+      - 'hydro_agent_mwh'
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("df.index must be a DatetimeIndex for DOY plot.")
+
+    if "hydro_hist_mwh" not in df.columns or "hydro_agent_mwh" not in df.columns:
+        raise ValueError("df must contain 'hydro_hist_mwh' and 'hydro_agent_mwh'.")
+
+    hist_stats = _doy_stats(df["hydro_hist_mwh"].dropna())
+    agent_stats = _doy_stats(df["hydro_agent_mwh"].dropna())
+
+    doy = hist_stats.index.values  # 1..365
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Clean style
+    ax.grid(True, which="major", linestyle=":", alpha=0.6)
+    for spine in ("top",):
+        ax.spines[spine].set_visible(False)
+
+    ax.tick_params(labelsize=11)
+    ax.set_xlabel("Day of year", fontsize=13)
+    ax.set_ylabel("Hydropower [MWh/day]", fontsize=13)
+
+    # Historic hydropower bands
+    ax.fill_between(
+        doy,
+        hist_stats["min"],
+        hist_stats["max"],
+        color="#dadaeb",
+        alpha=0.10,
+        label="_nolegend_",
+    )
+    ax.fill_between(
+        doy,
+        hist_stats["q25"],
+        hist_stats["q75"],
+        color="#bcbddc",
+        alpha=0.25,
+        label="Historic IQR",
+    )
+    ax.plot(
+        doy,
+        hist_stats["median"],
+        color="#756bb1",
+        linewidth=1.8,
+        label="Historic median",
+    )
+
+    # Agent hydropower bands
+    ax.fill_between(
+        doy,
+        agent_stats["min"],
+        agent_stats["max"],
+        color="#9e9ac8",
+        alpha=0.10,
+        label="_nolegend_",
+    )
+    ax.fill_between(
+        doy,
+        agent_stats["q25"],
+        agent_stats["q75"],
+        color="#807dba",
+        alpha=0.20,
+        label="Agent IQR",
+    )
+    ax.plot(
+        doy,
+        agent_stats["median"],
+        color="#54278f",
+        linewidth=1.8,
+        label="Agent median",
+    )
+
+    ax.set_title("Day-of-year hydropower (test period)", fontsize=14)
+
+    leg = ax.legend(loc="best", frameon=True)
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_facecolor("white")
+
+    fig.tight_layout()
+    return fig, ax
+
