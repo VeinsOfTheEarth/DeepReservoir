@@ -1,4 +1,4 @@
-from __future__ import annotations
+from typing import Tuple, Sequence, Mapping
 
 from pathlib import Path
 from typing import Tuple
@@ -7,6 +7,192 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Plot registry + groups + convenience driver
+# ---------------------------------------------------------------------------
+
+# Each entry: name -> { "func": callable, "requires": ("df_test" / "df_ep"), "filename": str }
+PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
+    "storage_timeseries": {
+        "func": plot_storage_timeseries,
+        "requires": ("df_test",),
+        "filename": "storage_timeseries.png",
+    },
+    "episode_mean_rewards": {
+        "func": plot_episode_mean_rewards,
+        "requires": ("df_ep",),
+        "filename": "episode_mean_rewards.png",
+    },
+    "release_timeseries": {
+        "func": plot_release_timeseries,
+        "requires": ("df_test",),
+        "filename": "release_timeseries.png",
+    },
+    "storage_doy": {
+        "func": plot_storage_doy,
+        "requires": ("df_test",),
+        "filename": "storage_doy.png",
+    },
+    "storage_doy_traces": {
+        "func": plot_storage_doy_traces,
+        "requires": ("df_test",),
+        "filename": "storage_doy_traces.png",
+    },
+    "hydropower_doy": {
+        "func": plot_hydropower_doy,
+        "requires": ("df_test",),
+        "filename": "hydropower_doy.png",
+    },
+    # Only include this if you added plot_hydropower_doy_traces above
+    "hydropower_doy_traces": {
+        "func": plot_hydropower_doy_traces,  # type: ignore[name-defined]
+        "requires": ("df_test",),
+        "filename": "hydropower_doy_traces.png",
+    },
+}
+
+
+# Optional groups, for convenience
+PLOT_GROUPS: dict[str, tuple[str, ...]] = {
+    "core": (
+        "storage_timeseries",
+        "episode_mean_rewards",
+        "release_timeseries",
+    ),
+    "storage": (
+        "storage_timeseries",
+        "storage_doy",
+        "storage_doy_traces",
+    ),
+    "hydropower": (
+        "hydropower_doy",
+        "hydropower_doy_traces",
+    ),
+    "rewards": (
+        "episode_mean_rewards",
+    ),
+    "timeseries": (
+        "storage_timeseries",
+        "release_timeseries",
+    ),
+    "doy": (
+        "storage_doy",
+        "storage_doy_traces",
+        "hydropower_doy",
+        "hydropower_doy_traces",
+    ),
+}
+
+def _resolve_plot_keys(which: str | Sequence[str] | None) -> list[str]:
+    """
+    Expand 'which' into a concrete list of plot keys.
+
+    - 'all' or None -> all registry keys
+    - group names (PLOT_GROUPS) expand to their members
+    - otherwise treated as individual plot names
+    - comma-separated strings are allowed
+    """
+    if which is None or which == "all":
+        return list(PLOT_REGISTRY.keys())
+
+    keys: list[str] = []
+
+    def add_name(name: str) -> None:
+        if name in PLOT_GROUPS:
+            for k in PLOT_GROUPS[name]:
+                if k not in keys:
+                    keys.append(k)
+        elif name in PLOT_REGISTRY:
+            if name not in keys:
+                keys.append(name)
+        else:
+            raise ValueError(f"Unknown plot or group name: {name!r}")
+
+    if isinstance(which, str):
+        parts = [p.strip() for p in which.split(",") if p.strip()]
+        for p in parts:
+            add_name(p)
+    else:
+        for item in which:
+            add_name(str(item))
+
+    return keys
+
+
+def save_plots(
+    *,
+    df_test: pd.DataFrame,
+    outdir: Path | str,
+    df_ep: pd.DataFrame | None = None,
+    which: str | Sequence[str] | None = "all",
+    plot_kwargs: Mapping[str, Mapping[str, object]] | None = None,
+    dpi: int = 300,
+) -> dict[str, Path]:
+    """
+    Generate and save one or more standard plots.
+
+    Parameters
+    ----------
+    df_test
+        Test-period rollout dataframe (from DRLModel.evaluate_test()).
+    outdir
+        Directory where PNGs will be written.
+    df_ep
+        Per-episode reward dataframe (from m.episode_reward_components_
+        or m._reward_components_cb.episode_history). Only required for plots
+        that need episode rewards (episode_mean_rewards).
+    which
+        - "all" (default): all plots in PLOT_REGISTRY
+        - name of a single plot (e.g. "storage_timeseries")
+        - name of a group (e.g. "storage", "hydropower", "core")
+        - list of plot and/or group names
+    plot_kwargs
+        Optional dict mapping plot-name -> kwargs dict passed to that plot
+        function, e.g. {"storage_timeseries": {"figsize": (12, 4)}}.
+    dpi
+        DPI for saved PNGs.
+
+    Returns
+    -------
+    dict
+        Mapping {plot_name: saved_path}.
+    """
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    if plot_kwargs is None:
+        plot_kwargs = {}
+
+    selected = _resolve_plot_keys(which)
+    saved: dict[str, Path] = {}
+
+    for name in selected:
+        spec = PLOT_REGISTRY[name]
+        func = spec["func"]  # type: ignore[assignment]
+        requires = spec["requires"]  # type: ignore[assignment]
+        filename = spec["filename"]  # type: ignore[assignment]
+
+        # Build args
+        args: list[object] = []
+        if "df_test" in requires:
+            args.append(df_test)
+        if "df_ep" in requires:
+            if df_ep is None:
+                raise ValueError(
+                    f"Plot {name!r} requires df_ep but none was provided."
+                )
+            args.append(df_ep)
+
+        kw = dict(plot_kwargs.get(name, {}))
+        res = func(*args, **kw)  # type: ignore[misc]
+        # All plot_* functions return (fig, ax[, ...])
+        fig = res[0]
+
+        path = outdir / filename
+        save(fig, path, dpi=dpi)
+        saved[name] = path
+
+    return saved
 
 
 # Global font (DejaVu is bundled with Matplotlib, so it’s safe/portable)
@@ -668,6 +854,73 @@ def plot_hydropower_doy(
     )
 
     ax.set_title("Day-of-year hydropower (test period)", fontsize=14)
+
+    leg = ax.legend(loc="best", frameon=True)
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_facecolor("white")
+
+    fig.tight_layout()
+    return fig, ax
+
+
+def plot_hydropower_doy_traces(
+    df: pd.DataFrame,
+    figsize: tuple[float, float] = (10, 4),
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot all hydropower trajectories (per year) for agent vs historic
+    on the same DOY axes.
+
+    Uses:
+      - 'hydro_hist_mwh'
+      - 'hydro_agent_mwh'
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("df.index must be a DatetimeIndex for DOY plot.")
+
+    if "hydro_hist_mwh" not in df.columns or "hydro_agent_mwh" not in df.columns:
+        raise ValueError("df must contain 'hydro_hist_mwh' and 'hydro_agent_mwh'.")
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Clean style
+    ax.grid(True, which="major", linestyle=":", alpha=0.6)
+    for spine in ("top",):
+        ax.spines[spine].set_visible(False)
+
+    ax.tick_params(labelsize=11)
+    ax.set_xlabel("Day of year", fontsize=13)
+    ax.set_ylabel("Hydropower [MWh/day]", fontsize=13)
+
+    # Historic trajectories (orange)
+    first_hist = True
+    for y, x_doy, vals in _iter_full_year_traces(df["hydro_hist_mwh"]):
+        label = "Historic (per year)" if first_hist else "_nolegend_"
+        ax.plot(
+            x_doy,
+            vals,
+            color=HIST_COLOR,
+            alpha=0.35,
+            linewidth=1.0,
+            label=label,
+        )
+        first_hist = False
+
+    # Agent trajectories (blue)
+    first_agent = True
+    for y, x_doy, vals in _iter_full_year_traces(df["hydro_agent_mwh"]):
+        label = "Agent (per year)" if first_agent else "_nolegend_"
+        ax.plot(
+            x_doy,
+            vals,
+            color=AGENT_COLOR,
+            alpha=0.35,
+            linewidth=1.0,
+            label=label,
+        )
+        first_agent = False
+
+    ax.set_title("Day-of-year hydropower trajectories (complete years, test period)", fontsize=14)
 
     leg = ax.legend(loc="best", frameon=True)
     leg.get_frame().set_alpha(0.9)

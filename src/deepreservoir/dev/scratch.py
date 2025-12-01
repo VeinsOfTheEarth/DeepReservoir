@@ -12,8 +12,8 @@ m = DRLModel(
     reward_spec=reward_spec,
     logdir=run_dir,
     device="cpu",
-    n_envs=20,              # try 4 first
-    use_subproc_vec=True, # start with DummyVecEnv for debugging
+    n_envs=1,              # try 4 first
+    use_subproc_vec=False, # start with DummyVecEnv for debugging
 )
 
 m.train(
@@ -55,33 +55,22 @@ df_test, metrics = m.evaluate_test(
 from deepreservoir.drl import plotting as drl_plot
 reload(drl_plot)
 
-# Storage plot
-fig, ax, ax2 = drl_plot.plot_storage_timeseries(df_test)
-drl_plot.save(fig, m.logdir / "storage_timeseries.png")
-
-# Episode mean rewards
+# Episode rewards
 cb = m._reward_components_cb
-df_ep = pd.DataFrame(cb.episode_history)
-df_ep = df_ep.sort_values("episode_idx").set_index("episode_idx")
-fig, ax = drl_plot.plot_episode_mean_rewards(df_ep)
-drl_plot.save(fig, m.logdir / "episode_mean_rewards.png")
+df_ep = pd.DataFrame(cb.episode_history).sort_values("episode_idx")
 
-# Release timeseries
-fig, ax = drl_plot.plot_release_timeseries(df_test)
-drl_plot.save(fig, m.logdir / "release_timeseries.png")
+# 1) Save all plots
+drl_plot.save_plots(
+    df_test=df_test,
+    df_ep=df_ep,
+    outdir=m.logdir,
+    which="all",
+)
 
-# Storage: DOY stats plot
-fig, ax = drl_plot.plot_storage_doy(df_test)
-drl_plot.save(fig, m.logdir / "storage_doy.png")
-
-# SStorage: spaghetti trajectories
-fig, ax = drl_plot.plot_storage_doy_traces(df_test)
-drl_plot.save(fig, m.logdir / "storage_doy_traces.png")
-
-# Hydropower: DOY stats plot
-fig, ax = drl_plot.plot_hydropower_doy(df_test)
-drl_plot.save(fig, m.logdir / "hydropower_doy.png")
-
-# Hydropower: spaghetti trajectories
-fig, ax = drl_plot.plot_hydropower_doy_traces(df_test)
-drl_plot.save(fig, m.logdir / "hydropower_doy_traces.png")
+# 2) If you want to save a subset of plots:
+# drl_plot.save_plots(
+#     df_test=df_test,
+#     df_ep=df_ep,
+#     outdir=m.logdir,
+#     which=["core", "doy"],  # groups
+# )
