@@ -24,3 +24,48 @@ total_timesteps
 episode_length
 n_episodes≈total_timesteps/episode_length.
 To “tune” it, you change either total_timesteps or how long your episodes are (via env logic like episode_length), not a separate argument to PPO.
+
+
+             ┌─────────────────────────────────────────────────────┐
+             │                      AGENT                          │
+             │                                                     │
+             │  Policy/Actor net πθ (obs → action distribution)    │
+             │  Value/Critic net Vϕ (obs → state value)            │
+             │  Rollout buffer (obs, act, rew, done, logπ, V)      │
+             └─────────────────────────────────────────────────────┘
+                               ▲                         │
+                               │ actions                 │ gradients (updates)
+                               │                         ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                      Parallel Environments (n_envs)                        │
+│                                                                            │
+│   Env 1: DeepReservoirEnv                                                 │
+│   Env 2: DeepReservoirEnv         ...         Env n: DeepReservoirEnv      │
+│                                                                            │
+│   • Each env simulates reservoir dynamics                                  │
+│   • Reward = f(storage, release, inflow, ...; reward_spec, scaling, etc.)  │
+└────────────────────────────────────────────────────────────────────────────┘
+     ▲                        ▲                             ▲
+     │                        │                             │
+     │                        │                             │
+     └───────── observations, rewards, dones, infos ─────────┘
+Agent = PPO algorithm + neural nets + rollout buffer.
+Environments = your DeepReservoir env(s), possibly vectorized (n_envs > 1).
+Interaction loop = agent picks actions, env steps reservoir forward, returns rewards; agent stores transitions; periodically, PPO updates the nets.
+
+2. Rollout + update timeline (what happens when)
+
+Think along a time axis with nested loops:
+
+for training_step in range(total_timesteps):
+    1. Agent gets obs_t from each env
+    2. Policy net πθ outputs action distribution for each obs_t
+    3. Sample action_t ~ πθ(. | obs_t)
+    4. Step envs with action_t → obs_{t+1}, reward_t, done_t, info_t
+    5. Store (obs_t, action_t, reward_t, done_t, logπθ(action_t|obs_t), Vϕ(obs_t))
+       in the rollout buffer
+
+    When we've collected n_steps steps per env (i.e., n_steps * n_envs transitions):
+        6. Compute returns & advantages (using gamma, gae_lambda)
+        7. Train policy/value nets for n_epochs over this rollout
+        8. Clear rollout buffer
