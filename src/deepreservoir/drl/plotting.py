@@ -8,118 +8,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Plot registry + groups + convenience driver
-# ---------------------------------------------------------------------------
-
-# Each entry: name -> { "func": callable, "requires": ("df_test" / "df_ep"), "filename": str }
-PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
-    "storage_timeseries": {
-        "func": plot_storage_timeseries,
-        "requires": ("df_test",),
-        "filename": "storage_timeseries.png",
-    },
-    "episode_mean_rewards": {
-        "func": plot_episode_mean_rewards,
-        "requires": ("df_ep",),
-        "filename": "episode_mean_rewards.png",
-    },
-    "release_timeseries": {
-        "func": plot_release_timeseries,
-        "requires": ("df_test",),
-        "filename": "release_timeseries.png",
-    },
-    "storage_doy": {
-        "func": plot_storage_doy,
-        "requires": ("df_test",),
-        "filename": "storage_doy.png",
-    },
-    "storage_doy_traces": {
-        "func": plot_storage_doy_traces,
-        "requires": ("df_test",),
-        "filename": "storage_doy_traces.png",
-    },
-    "hydropower_doy": {
-        "func": plot_hydropower_doy,
-        "requires": ("df_test",),
-        "filename": "hydropower_doy.png",
-    },
-    # Only include this if you added plot_hydropower_doy_traces above
-    "hydropower_doy_traces": {
-        "func": plot_hydropower_doy_traces,  # type: ignore[name-defined]
-        "requires": ("df_test",),
-        "filename": "hydropower_doy_traces.png",
-    },
-}
-
-
-# Optional groups, for convenience
-PLOT_GROUPS: dict[str, tuple[str, ...]] = {
-    "core": (
-        "storage_timeseries",
-        "episode_mean_rewards",
-        "release_timeseries",
-    ),
-    "storage": (
-        "storage_timeseries",
-        "storage_doy",
-        "storage_doy_traces",
-    ),
-    "hydropower": (
-        "hydropower_doy",
-        "hydropower_doy_traces",
-    ),
-    "rewards": (
-        "episode_mean_rewards",
-    ),
-    "timeseries": (
-        "storage_timeseries",
-        "release_timeseries",
-    ),
-    "doy": (
-        "storage_doy",
-        "storage_doy_traces",
-        "hydropower_doy",
-        "hydropower_doy_traces",
-    ),
-}
-
-def _resolve_plot_keys(which: str | Sequence[str] | None) -> list[str]:
-    """
-    Expand 'which' into a concrete list of plot keys.
-
-    - 'all' or None -> all registry keys
-    - group names (PLOT_GROUPS) expand to their members
-    - otherwise treated as individual plot names
-    - comma-separated strings are allowed
-    """
-    if which is None or which == "all":
-        return list(PLOT_REGISTRY.keys())
-
-    keys: list[str] = []
-
-    def add_name(name: str) -> None:
-        if name in PLOT_GROUPS:
-            for k in PLOT_GROUPS[name]:
-                if k not in keys:
-                    keys.append(k)
-        elif name in PLOT_REGISTRY:
-            if name not in keys:
-                keys.append(name)
-        else:
-            raise ValueError(f"Unknown plot or group name: {name!r}")
-
-    if isinstance(which, str):
-        parts = [p.strip() for p in which.split(",") if p.strip()]
-        for p in parts:
-            add_name(p)
-    else:
-        for item in which:
-            add_name(str(item))
-
-    return keys
-
-
 def save_plots(
     *,
     df_test: pd.DataFrame,
@@ -929,3 +817,120 @@ def plot_hydropower_doy_traces(
     fig.tight_layout()
     return fig, ax
 
+
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Plot registry + groups + convenience driver
+# ---------------------------------------------------------------------------
+
+# Each entry: name -> { "func": callable, "requires": ("df_test" / "df_ep"), "filename": str }
+PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
+    "storage_timeseries": {
+        "func": plot_storage_timeseries,
+        "requires": ("df_test",),
+        "filename": "storage_timeseries.png",
+    },
+    "episode_mean_rewards": {
+        "func": plot_episode_mean_rewards,
+        "requires": ("df_ep",),
+        "filename": "episode_mean_rewards.png",
+    },
+    "release_timeseries": {
+        "func": plot_release_timeseries,
+        "requires": ("df_test",),
+        "filename": "release_timeseries.png",
+    },
+    "storage_doy": {
+        "func": plot_storage_doy,
+        "requires": ("df_test",),
+        "filename": "storage_doy.png",
+    },
+    "storage_doy_traces": {
+        "func": plot_storage_doy_traces,
+        "requires": ("df_test",),
+        "filename": "storage_doy_traces.png",
+    },
+    "hydropower_doy": {
+        "func": plot_hydropower_doy,
+        "requires": ("df_test",),
+        "filename": "hydropower_doy.png",
+    },
+    # Only include this if you added plot_hydropower_doy_traces above
+    "hydropower_doy_traces": {
+        "func": plot_hydropower_doy_traces,  # type: ignore[name-defined]
+        "requires": ("df_test",),
+        "filename": "hydropower_doy_traces.png",
+    },
+}
+
+
+# Optional groups, for convenience
+PLOT_GROUPS: dict[str, tuple[str, ...]] = {
+    "core": (
+        "storage_timeseries",
+        "episode_mean_rewards",
+        "release_timeseries",
+    ),
+    "storage": (
+        "storage_timeseries",
+        "storage_doy",
+        "storage_doy_traces",
+    ),
+    "hydropower": (
+        "hydropower_doy",
+        "hydropower_doy_traces",
+    ),
+    "rewards": (
+        "episode_mean_rewards",
+    ),
+    "timeseries": (
+        "storage_timeseries",
+        "release_timeseries",
+    ),
+    "doy": (
+        "storage_doy",
+        "storage_doy_traces",
+        "hydropower_doy",
+        "hydropower_doy_traces",
+    ),
+}
+
+def _resolve_plot_keys(which: str | Sequence[str] | None) -> list[str]:
+    """
+    Expand 'which' into a concrete list of plot keys.
+
+    - 'all' or None -> all registry keys
+    - group names (PLOT_GROUPS) expand to their members
+    - otherwise treated as individual plot names
+    - comma-separated strings are allowed
+    """
+    if which is None or which == "all":
+        return list(PLOT_REGISTRY.keys())
+
+    keys: list[str] = []
+
+    def add_name(name: str) -> None:
+        if name in PLOT_GROUPS:
+            for k in PLOT_GROUPS[name]:
+                if k not in keys:
+                    keys.append(k)
+        elif name in PLOT_REGISTRY:
+            if name not in keys:
+                keys.append(name)
+        else:
+            raise ValueError(f"Unknown plot or group name: {name!r}")
+
+    if isinstance(which, str):
+        parts = [p.strip() for p in which.split(",") if p.strip()]
+        for p in parts:
+            add_name(p)
+    else:
+        for item in which:
+            add_name(str(item))
+
+    return keys

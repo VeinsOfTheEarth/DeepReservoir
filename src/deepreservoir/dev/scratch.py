@@ -2,8 +2,10 @@ import pandas as pd
 from deepreservoir.drl.model import DRLModel
 from pathlib import Path
 from importlib import reload
+from deepreservoir.drl import plotting as drl_plot
 
-reward_spec = "dam_safety:storage_band,esa_min_flow:baseline,flooding:baseline,niip:baseline,hydropower:baseline,physics:scale_penalty"
+experiment_name = 'test3'
+# reward_spec = "dam_safety:storage_band,esa_min_flow:baseline,flooding:baseline,niip:baseline,hydropower:baseline,physics:scale_penalty"
 reward_spec = "dam_safety:storage_band,physics:scale_penalty"
 run_dir = Path("runs/debug_parallel")
 
@@ -18,46 +20,53 @@ m = DRLModel(
 
 m.train(
     total_timesteps=500_000,
-    device="cpu",
-    n_steps=1024,
+    n_steps=4096,
     batch_size=4096,
+    n_epochs=10,
+    gamma=0.999,
     track_reward_components=True,
-    gamma = 0.9995
 )
 
-# 4
-elapsed : 2938
-timesteps : 507904
+# load the policy weights
+m.load_model("last_model")
 
-# 16
-time_elapsed : 964
-total_timesteps : 524288
+# # 4
+# elapsed : 2938
+# timesteps : 507904
 
-# 32
-time_elapsed : 875
-total_timesteps : 524288
+# # 16
+# time_elapsed : 964
+# total_timesteps : 524288
 
-# 20 (but with n_steps = 1024)
-time_elapsed : 843
-total_timesteps : 512000
+# # 32
+# time_elapsed : 875
+# total_timesteps : 524288
 
-# 20 (only two rewards)
-te : 226
-tt : 512000
-# m.load_model("last_model")
+# # 20 (but with n_steps = 1024)
+# time_elapsed : 843
+# total_timesteps : 512000
 
+# # 20 (only two rewards)
+# te : 226
+# tt : 512000
+
+# load per-episode reward components
+df_ep = m.load_episode_reward_components()
+
+# evaluate test rollout (for df_test)
 df_test, metrics = m.evaluate_test(
-    save_rollout=True,   # if you want to overwrite the parquet
+    save_rollout=True,
     save_plots=False,
     save_metrics=False,
 )
 
-from deepreservoir.drl import plotting as drl_plot
-reload(drl_plot)
-
-# Episode rewards
-cb = m._reward_components_cb
-df_ep = pd.DataFrame(cb.episode_history).sort_values("episode_idx")
+# now you can call your plot driver
+drl_plot.save_plots(
+    df_test=df_test,
+    df_ep=df_ep,
+    outdir=m.logdir,
+    which="all",
+)
 
 # 1) Save all plots
 drl_plot.save_plots(

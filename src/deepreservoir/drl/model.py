@@ -417,9 +417,11 @@ class DRLModel:
         logdir: str | Path = "runs/debug",
         seed: int | None = None,
         device: str = "auto",
-        n_envs: int = 1,              # NEW
-        use_subproc_vec: bool = False # NEW
+        gamma: float | None = None,
+        n_envs: int = 1,              
+        use_subproc_vec: bool = False 
     ) -> None:
+        
         self.n_years_test = n_years_test
         self.reward_spec = reward_spec
         self.algo = algo.lower()
@@ -428,6 +430,16 @@ class DRLModel:
         self.device = device
         self.n_envs = int(n_envs)
         self.use_subproc_vec = bool(use_subproc_vec)
+        self._reward_components_cb = None
+        self.episode_reward_components_ = None
+        self.gamma = gamma
+
+        # Load the rewards training data if exist
+        try:
+            self.load_episode_reward_components()
+        except Exception:
+            # ignore if file not there / broken
+            pass
 
         # Load data
         self.datasets = load_datasets(n_years_test)
@@ -477,16 +489,9 @@ class DRLModel:
         n_steps: int | None = None,
         batch_size: int | None = None,
         n_epochs: int | None = None,
-        track_reward_components: bool = True,
         gamma: float | None = None,
-
+        track_reward_components: bool = True,
     ) -> None:
-        """
-        Build the agent (with the given hyperparams) and train it.
-
-        If track_reward_components=True, records mean reward per objective
-        for each episode in `self.episode_reward_components_` (a DataFrame).
-        """
         device_eff = device or self.device
 
         self.agent = build_agent(
@@ -497,7 +502,8 @@ class DRLModel:
             n_steps=n_steps,
             batch_size=batch_size,
             n_epochs=n_epochs,
-            gamma=gamma,  # <-- this was missing
+            gamma=gamma,
+
         )
 
         best_dir = self.logdir / "best"
@@ -514,30 +520,33 @@ class DRLModel:
             render=False,
         )
 
-        cb_list = [eval_callback]
+        cb_list: list[BaseCallback] = [eval_callback]
         self._reward_components_cb = None
 
         if track_reward_components:
             self._reward_components_cb = EpisodeRewardComponentsCallback()
             cb_list.append(self._reward_components_cb)
 
-        callback = (
-            cb_list[0]
-            if len(cb_list) == 1
-            else CallbackList(cb_list)
-        )
-
-        self.agent.learn(total_timesteps=total_timesteps, callback=callback)
-        self.save_model("last_model")
-
-        # convert callback history to a DataFrame for later plotting
-        if self._reward_components_cb is not None:
-            import pandas as pd
-            self.episode_reward_components_ = pd.DataFrame(
-                self._reward_components_cb.episode_history
-            )
+        if len(cb_list) == 1:
+            callback: BaseCallback = cb_list[0]
         else:
-            self.episode_reward_components_ = None
+            callback = CallbackList(cb_list)
+
+        try:
+            # main training
+            self.agent.learn(total_timesteps=total_timesteps, callback=callback)
+            # save policy weights
+            self.save_model("last_model")
+        finally:
+            # ALWAYS try to persist episode-level reward data if we have it
+            if self._reward_components_cb is not None:
+                df_ep = pd.DataFrame(self._reward_components_cb.episode_history)
+                # keep for in-memory use
+                self.episode_reward_components_ = df_ep
+                # and persist to disk alongside the run
+                out_path = self.logdir / "episode_reward_components.parquet"
+                df_ep.to_parquet(out_path, index=False)
+
 
     def save_model(self, name: str = "last_model") -> Path:
         """
@@ -561,6 +570,21 @@ class DRLModel:
             path = path.with_suffix(".zip")
         self.agent = PPO.load(path, env=self.train_env, device=self.device)
         return self.agent
+
+    def load_episode_reward_components(self) -> pd.DataFrame | None:
+        """
+        Load per-episode reward components from disk into
+        self.episode_reward_components_.
+
+        Returns the DataFrame, or None if no file exists.
+        """
+        import pandas as pd
+        path = self.logdir / "episode_reward_components.parquet"
+        if not path.exists():
+            return None
+        df_ep = pd.read_parquet(path)
+        self.episode_reward_components_ = df_ep
+        return df_ep
 
     def evaluate_test(
         self,
