@@ -10,7 +10,8 @@ This module is responsible only for:
 
 from __future__ import annotations
 import argparse
-from deepreservoir.drl import model 
+
+from deepreservoir.drl import model
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,15 +67,14 @@ def main(argv=None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    model.train(
+    drlm = model.DRLModel(
         n_years_test=args.n_years_test,
         reward_spec=args.reward_spec,
         algo=args.algo,
-        total_timesteps=args.total_timesteps,
         logdir=args.logdir,
         seed=args.seed,
     )
-
+    drlm.train(total_timesteps=args.total_timesteps,)
 
 if __name__ == "__main__":
     main()
