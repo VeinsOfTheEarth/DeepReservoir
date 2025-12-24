@@ -130,7 +130,7 @@ def project_metadata() -> Metadata:
         "reservoir": {
             "path": "data/navajo_reservoir_historic/Clipped_NAVAJORESERVOIR08-18-2024T16.48.23.csv",
             "reader": "csv",
-            "index": {"name": "Date", "format": "%d-%b-%y"},
+            "index": {"name": "Date", "format": "%m/%d/%y", "two_digit_year_fix": "force_1900s"},
             "columns": {
                 "Total Release (cfs)": "release_cfs",
                 "Storage (af)": "storage_af",
@@ -227,6 +227,25 @@ def project_metadata() -> Metadata:
             "columns": {"value": "mancos_towaoc_q_cfs"},
             "required": ("mancos_towaoc_q_cfs",),
         },
+
+         # --- SWE (daily) for model inputs ---
+         # Animas basin SWE → required by the model
+         "swe_animas": {
+             "path": "data/snow_water_equivalent/Animas_swe_daily.csv",
+             "reader": "csv",
+             "index": {"name": "date", "format": "%Y-%m-%d"},
+             "columns": {"snow_depth_water_equivalent": "animas_swe_m"},
+             "required": ("animas_swe_m",),
+         },
+         # Upper San Juan SWE → loadable but not required by the model
+         "swe_upper_sj": {
+             "path": "data/snow_water_equivalent/UpperSJ_swe_daily.csv",
+             "reader": "csv",
+             "index": {"name": "date", "format": "%Y-%m-%d"},
+             "columns": {"snow_depth_water_equivalent": "uppersj_swe_m"},
+             "required": ("uppersj_swe_m",),
+         },
+
 
         # NIIP
         "niip_historic": {
