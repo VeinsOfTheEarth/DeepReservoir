@@ -4,11 +4,12 @@ import pandas as pd
 from gymnasium import Env
 from collections import deque, defaultdict
 from gymnasium.spaces import Box
+
 from deepreservoir.drl.rewards import RewardContext
 from deepreservoir.data.metadata import project_metadata
 from deepreservoir.define_env.hydropower_model import navajo_power_generation_model
 
-m  = project_metadata()
+m = project_metadata()
 
 # 1 cfs sustained over a day to acre-feet
 CFS_TO_AF_PER_DAY = 1.98211
@@ -18,63 +19,24 @@ class NavajoReservoirEnv(Env):
     """
     Navajo Reservoir environment (daily timestep).
 
-    DATA / STATE (raw units)
-    ------------------------
-    Internal state:
-        storage_af          : current simulated storage [acre-feet]
-
-    Required columns in data_raw (index = datetime):
-        storage_af          : historical storage [acre-feet] (used for initialization only)
-        inflow_cfs          : inflow to reservoir [cubic feet per second]
-        evap_af             : evaporation loss from reservoir [acre-feet]
-        elev_ft (optional)  : historical elevation [feet] (not required; we compute elevation from storage)
-
-    data_norm:
-        Same index/columns as data_raw, normalized with norm_stats.
-        - storage_af        : standard normal variate (we recompute from simulated storage)
-        - other cols        : standard normal variate
-        - doy               : day-of-year normalized as doy / 366
-
-    OBSERVATION (normalized)
-    ------------------------
-    obs_cols (in order):
-        storage_af          : normalized storage (from simulated storage_af)
-        inflow_cfs          : normalized inflow
-        sj_farmington_q_cfs : normalized flow at Farmington (if present)
-        sj_bluff_q_cfs      : normalized flow at Bluff (if present)
-        doy                 : day-of-year / 366
-
     ACTION (daily releases)
     -----------------------
     action: np.array shape (2,), each in [-1, 1]
         action[0]  → San Juan mainstem release, mapped to sanjuan_release_cfs [cfs]
         action[1]  → NIIP diversion release, mapped to niip_release_cfs [cfs]
 
-    MASS BALANCE (AF)
-    -----------------
-    S(t+1) = S(t) + inflow_af - evap_af - total_release_af
-        inflow_af         = inflow_cfs * CFS_TO_AF_PER_DAY
-        total_release_af  = (sanjuan_release_cfs + niip_release_cfs) * CFS_TO_AF_PER_DAY
-
-    INFO DICT KEYS (per step)
-    -------------------------
-        date                      : pd.Timestamp, current date
-        storage_af                : new simulated storage [acre-feet]
-        prev_storage_af           : previous storage [acre-feet]
-        inflow_cfs                : inflow [cfs]
-        inflow_af                 : inflow [acre-feet/day]
-        evap_af                   : evaporation [acre-feet/day]
-        sanjuan_release_cfs       : San Juan release [cfs]
-        niip_release_cfs          : NIIP release [cfs]
-        total_release_cfs         : combined release [cfs]
-        total_release_af          : combined release [acre-feet/day]
-        elev_ft                   : reservoir elevation [feet] (computed from storage)
-        min_storage_af            : lower bound of “safe” storage band [acre-feet]
-        max_storage_af            : upper bound of “safe” storage band [acre-feet]
-        raw_forcings              : full raw row from data_raw (pd.Series)
+    OBSERVATION (normalized)
+    ------------------------
+    obs_cols (in order):
+        storage_af          : normalized storage (from simulated storage_af)
+        inflow_cfs          : normalized inflow
+        evap_af             : normalized evaporation (if present)   <-- added
+        sj_farmington_q_cfs : normalized flow at Farmington (if present)
+        sj_bluff_q_cfs      : normalized flow at Bluff (if present)
+        doy                 : day-of-year / 366
     """
 
-    metadata = {"render_modes": []}  # Gymnasium-style; unused for now
+    metadata = {"render_modes": []}
 
     def __init__(
         self,
@@ -89,6 +51,7 @@ class NavajoReservoirEnv(Env):
     ):
         super().__init__()
         assert data_raw.index.equals(data_norm.index)
+
         self.data_raw = data_raw
         self.data_norm = data_norm
         self.norm_stats = norm_stats
@@ -110,26 +73,36 @@ class NavajoReservoirEnv(Env):
         self.max_storage_af = 1_731_750.0
 
         # ACTION SPACE: 2 releases in [-1, 1]
-        #  action[0] -> sanjuan_release_cfs
-        #  action[1] -> niip_release_cfs
         self.action_space = Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
-        # Create storage for computing 2-day lagged discharge at Bluff
+        # Create storage for computing 2-day lagged discharge at Farmington proxy
         self.sj_at_farmington_history = deque(maxlen=3)
 
-        # OBSERVATION SPACE: pick normalized columns you want agent to see
+        # OBSERVATION SPACE: choose normalized columns available to agent
+        # NOTE: storage_af is recomputed from simulated storage, not taken from data_norm
         obs_cols = []
+
+        # include these if present in normalized data
         for col in [
             "storage_af",
             "inflow_cfs",
+            "evap_af",        # <-- added
+            # optionally support evap_cfs if someone later changes preprocessing
+            "evap_cfs",
             "sj_farmington_q_cfs",
             "sj_bluff_q_cfs",
             "doy",
         ]:
-            if col in self.data_norm.columns:
+            if col in self.data_norm.columns and col not in obs_cols:
                 obs_cols.append(col)
+
+        # If both evap_af and evap_cfs exist, prefer evap_af (drop evap_cfs)
+        if "evap_af" in obs_cols and "evap_cfs" in obs_cols:
+            obs_cols.remove("evap_cfs")
+
         self.obs_cols = obs_cols
         self.obs_dim = len(self.obs_cols)
+
         self.observation_space = Box(
             low=-np.inf,
             high=np.inf,
@@ -138,25 +111,20 @@ class NavajoReservoirEnv(Env):
         )
 
         # Load elevation–area–capacity models built within build_interpolating_models.py
-        with open(m.path('elev_area_storage_pickle'), "rb") as f:
+        with open(m.path("elev_area_storage_pickle"), "rb") as f:
             elev_models = pickle.load(f)
-
-        # Interpolators built from CSV:
-        #   "capacity_to_elevation": capacity [ac-ft] -> elevation [ft]
-        #   others exist if you ever need them: elevation_to_capacity, etc.
         self.capacity_to_elev = elev_models["capacity_to_elevation"]
 
         # Internal state
-        self.t = 0                         # step index within episode
-        self.start_idx = 0                # where this episode starts in the time series
-        self.storage_af: float | None = None  # current simulated storage [AF]
+        self.t = 0
+        self.start_idx = 0
+        self.storage_af: float | None = None
         self.episode_step_count = 0
 
         # Optional bookkeeping
         self.last_reward_breakdown: dict[str, float] | None = None
 
         # Episode-level reward tracking (for diagnostics)
-        # keys match CompositeReward keys, e.g. "niip.baseline"
         self._episode_reward_sums: dict[str, float] = defaultdict(float)
         self._episode_total_reward: float = 0.0
 
@@ -172,24 +140,22 @@ class NavajoReservoirEnv(Env):
 
     def _build_obs(self) -> np.ndarray:
         """
-        Build the observation vector at the CURRENT time index using:
-        - simulated storage_af (normalized),
-        - exogenous normalized forcings from data_norm,
-        - normalized day-of-year.
+        Build observation vector at CURRENT index.
 
-        obs[i] units (conceptually):
-            storage_af          -> standard normal variate of storage [AF]
-            inflow_cfs          -> standard normal variate of inflow [cfs]
-            sj_*_q_cfs          -> standard normal variate of gage flow [cfs]
-            doy                 -> day_of_year / 366 in [0, 1]
+        - storage_af: derived from simulated storage_af (normalized)
+        - other forcings: read from data_norm for that day
+        - doy: date.dayofyear / 366
         """
         idx = self._current_global_idx()
         date = self.dates[idx]
 
-        # storage_norm from simulated storage_af, not historical
-        storage_mean = self.norm_stats.loc["storage_af", "mean"]
-        storage_std = self.norm_stats.loc["storage_af", "std"]
-        storage_norm = (self.storage_af - storage_mean) / storage_std
+        # Storage normalized from simulated storage_af
+        storage_mean = float(self.norm_stats.loc["storage_af", "mean"])
+        storage_std = float(self.norm_stats.loc["storage_af", "std"])
+        # guard against weird std
+        if storage_std == 0.0:
+            storage_std = 1.0
+        storage_norm = (float(self.storage_af) - storage_mean) / storage_std
 
         row_norm = self.data_norm.iloc[idx]
 
@@ -198,26 +164,28 @@ class NavajoReservoirEnv(Env):
             if col == "storage_af":
                 vals.append(float(storage_norm))
             elif col == "doy":
-                vals.append(date.dayofyear / 366.0)
+                vals.append(float(date.dayofyear) / 366.0)
             else:
                 vals.append(float(row_norm[col]))
+
         return np.asarray(vals, dtype=np.float32)
 
     # ------------------------------------------------------------------ #
     # Gym API
     # ------------------------------------------------------------------ #
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
         # Decide where this episode starts
-        if self.is_eval or self.episode_length is None:
-            # Evaluation: always start from the beginning, full series
+        # NOTE: if episode_length is full series, random windows don't matter much,
+        # but we keep the logic consistent.
+        if self.is_eval:
             self.start_idx = 0
             self.max_steps = self.n_steps
         else:
-            # Training: random window of length episode_length
-            max_start = self.n_steps - self.episode_length
-            # self.np_random is provided by gymnasium after super().reset(seed)
+            # Training: random window if episode_length < n_steps
+            max_start = max(self.n_steps - self.episode_length, 0)
             self.start_idx = int(self.np_random.integers(0, max_start + 1))
             self.max_steps = self.episode_length
 
@@ -227,17 +195,21 @@ class NavajoReservoirEnv(Env):
         # Initialize storage at the chosen start index
         self.storage_af = float(self.data_raw.iloc[self.start_idx]["storage_af"])
 
-        # any other per-episode state
+        # Reset per-episode caches
         self.last_reward_breakdown = None
         self.sj_at_farmington_history.clear()
+
+        # IMPORTANT: reset episode reward accumulators
+        self._episode_reward_sums = defaultdict(float)
+        self._episode_total_reward = 0.0
 
         obs = self._build_obs()
         return obs, {}
 
     def step(self, action):
-        # --- Clip / unpack action (2 outlets in [-1, 1]) ---
-        action = np.asarray(action, dtype=np.float32)
-        if action.shape != (2,):
+        # --- robust action shaping ---
+        action = np.asarray(action, dtype=np.float32).squeeze()
+        if action.ndim != 1 or action.shape[0] != 2:
             raise ValueError(f"Expected action shape (2,), got {action.shape}")
         action = np.clip(action, -1.0, 1.0)
 
@@ -247,9 +219,8 @@ class NavajoReservoirEnv(Env):
         date = self.dates[global_idx]
 
         # Map actions to releases [cfs]
-        # action ∈ [-1,1] -> frac ∈ [0,1] -> [min_release_cfs, max_release_cfs]
         frac_sanjuan = (action[0] + 1.0) / 2.0
-        frac_niip    = (action[1] + 1.0) / 2.0
+        frac_niip = (action[1] + 1.0) / 2.0
 
         sanjuan_release_cfs = self.min_release_cfs + frac_sanjuan * (
             self.max_release_cfs - self.min_release_cfs
@@ -261,29 +232,26 @@ class NavajoReservoirEnv(Env):
         requested_total_release_cfs = sanjuan_release_cfs + niip_release_cfs
 
         # --- MASS BALANCE PIECES ---
-        row_raw   = self.data_raw.iloc[global_idx]
+        row_raw = self.data_raw.iloc[global_idx]
         inflow_cfs = float(row_raw["inflow_cfs"])
-        inflow_af  = inflow_cfs * CFS_TO_AF_PER_DAY
-        evap_af    = float(row_raw["evap_af"])
+        inflow_af = inflow_cfs * CFS_TO_AF_PER_DAY
+        evap_af = float(row_raw["evap_af"])
 
         # Physically available volume this day
-        available_af = max(self.storage_af + inflow_af - evap_af, 0.0)
+        available_af = max(float(self.storage_af) + inflow_af - evap_af, 0.0)
         max_total_release_cfs_phys = available_af / CFS_TO_AF_PER_DAY
-
-        # # Also respect your engineered cap
-        # max_total_release_cfs_phys = min(max_total_release_cfs_phys,
-        #                                 2.0 * self.max_release_cfs)
 
         # --- PROJECT REQUESTED RELEASE INTO FEASIBLE SET ---
         scale_penalty = 0.0
         if requested_total_release_cfs > max_total_release_cfs_phys:
-            if requested_total_release_cfs > 0.0:
-                scale = max_total_release_cfs_phys / requested_total_release_cfs
-            else:
-                scale = 0.0
+            scale = (
+                max_total_release_cfs_phys / requested_total_release_cfs
+                if requested_total_release_cfs > 0.0
+                else 0.0
+            )
             sanjuan_release_cfs *= scale
-            niip_release_cfs    *= scale
-            total_release_cfs   = sanjuan_release_cfs + niip_release_cfs
+            niip_release_cfs *= scale
+            total_release_cfs = sanjuan_release_cfs + niip_release_cfs
 
             # Optional: how “bad” was the request?
             scale_penalty = (requested_total_release_cfs - total_release_cfs) / (
@@ -292,58 +260,50 @@ class NavajoReservoirEnv(Env):
         else:
             total_release_cfs = requested_total_release_cfs
 
+        # --- Mass balance update in AF ---
         total_release_af = total_release_cfs * CFS_TO_AF_PER_DAY
-        new_storage_af   = self.storage_af + inflow_af - evap_af - total_release_af
-        new_storage_af   = max(new_storage_af, 0.0)
+        new_storage_af = float(self.storage_af) + inflow_af - evap_af - total_release_af
+        new_storage_af = max(new_storage_af, 0.0)
 
-
-        # Animas at Farmington [cfs]
+        # Farmington proxy and lag-2
         animas_cfs = float(row_raw["animas_farmington_q_cfs"])
-
-        # San Juan @ Farmington = Animas + mainstem release [cfs]
         sj_at_farm_cfs = animas_cfs + sanjuan_release_cfs
 
-        # Update history for lag-2
         self.sj_at_farmington_history.append(sj_at_farm_cfs)
         if len(self.sj_at_farmington_history) >= 3:
-            sj_at_farm_lag2_cfs = self.sj_at_farmington_history[-3]  # two days ago
+            sj_at_farm_lag2_cfs = self.sj_at_farmington_history[-3]
         else:
             sj_at_farm_lag2_cfs = None
-
-
-        # --- Mass balance update in AF ---
-        new_storage_af = self.storage_af + inflow_af - evap_af - total_release_af
-        new_storage_af = max(new_storage_af, 0.0)  # enforce non-negative storage
 
         # Elevation based on new storage using capacity_to_elevation model
         new_elev_ft = float(self.capacity_to_elev(new_storage_af))
 
         # Hydropower generation [MWh/day] from mainstem release + elevation
         hydropower_mwh = navajo_power_generation_model(
-            cfs_values=sanjuan_release_cfs,
-            elevation_ft=new_elev_ft,
+            cfs_values=float(sanjuan_release_cfs),
+            elevation_ft=float(new_elev_ft),
         )
 
         # Build info dict for rewards/logging
         info = {
             "date": date,
             "storage_af": new_storage_af,
-            "prev_storage_af": self.storage_af,
+            "prev_storage_af": float(self.storage_af),
             "inflow_cfs": inflow_cfs,
             "inflow_af": inflow_af,
             "evap_af": evap_af,
-            "sanjuan_release_cfs": sanjuan_release_cfs,
-            "niip_release_cfs": niip_release_cfs,
-            "total_release_cfs": total_release_cfs,
-            "total_release_af": total_release_af,
-            "elev_ft": new_elev_ft,
-            "sj_at_farmington_cfs": sj_at_farm_cfs,
-            "sj_at_farmington_lag2_cfs": sj_at_farm_lag2_cfs,
-            "min_storage_af": self.min_storage_af,
-            "max_storage_af": self.max_storage_af,
+            "sanjuan_release_cfs": float(sanjuan_release_cfs),
+            "niip_release_cfs": float(niip_release_cfs),
+            "total_release_cfs": float(total_release_cfs),
+            "total_release_af": float(total_release_af),
+            "elev_ft": float(new_elev_ft),
+            "sj_at_farmington_cfs": float(sj_at_farm_cfs),
+            "sj_at_farmington_lag2_cfs": None if sj_at_farm_lag2_cfs is None else float(sj_at_farm_lag2_cfs),
+            "min_storage_af": float(self.min_storage_af),
+            "max_storage_af": float(self.max_storage_af),
             "raw_forcings": row_raw,
-            "hydropower_mwh" : hydropower_mwh,
-            "release_scale_penalty": scale_penalty,
+            "hydropower_mwh": float(hydropower_mwh),
+            "release_scale_penalty": float(scale_penalty),
         }
 
         # Advance internal state
@@ -351,12 +311,12 @@ class NavajoReservoirEnv(Env):
         self.t += 1
         self.episode_step_count += 1
 
-        done = (
-            self._current_global_idx() >= self.n_steps
-            or self.episode_step_count >= self.episode_length
-        )
-        terminated = done
-        truncated = False  # could distinguish time-limit truncation later
+        # Done logic: stop if we hit end-of-series or episode length
+        global_idx_next = self._current_global_idx()
+        done = (global_idx_next >= self.n_steps) or (self.episode_step_count >= self.episode_length)
+
+        terminated = bool(done)
+        truncated = False
 
         # Next observation (SB3 doesn’t care if obs is dummy at done)
         if not done:
@@ -379,15 +339,14 @@ class NavajoReservoirEnv(Env):
         # --- Episode-level reward bookkeeping ---
         self._episode_total_reward += float(total_reward)
         for key, val in breakdown.items():
-            # breakdown already includes weights from CompositeReward
             self._episode_reward_sums[key] += float(val)
 
         # Expose everything via info for logging/diagnostics
-        info["reward_components_step"] = breakdown                     # this step
-        info["reward_components_episode"] = dict(self._episode_reward_sums)  # cumulative
-        info["episode_total_reward"] = self._episode_total_reward
+        info["reward_components_step"] = breakdown
+        info["reward_components_episode"] = dict(self._episode_reward_sums)
+        info["episode_total_reward"] = float(self._episode_total_reward)
 
-        # Backwards-compatible alias if you were already using this
+        # Backwards-compatible alias
         info["reward_components"] = breakdown
 
         return next_obs, float(total_reward), terminated, truncated, info
