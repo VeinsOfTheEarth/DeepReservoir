@@ -77,10 +77,11 @@ class NavajoData:
         "sj_farmington": ("sj_farmington_q_cfs",),
         "sj_bluff": ("sj_bluff_q_cfs",),
         "animas_farmington": ("animas_farmington_q_cfs",),
+        "swe_animas" : ("animas_swe_m",)
     }
 
     _MODEL_OPTIONAL = {
-        "swe_daily": ("swe_mm",), # move this to required once the daily files have been generated.
+        "swe_upper_sj": ("uppersj_swe_m",), 
     }
 
     def _contiguous_bounds(self, idx: pd.DatetimeIndex):
@@ -165,16 +166,48 @@ class NavajoData:
             raise ValueError(f"{name}: unknown reader '{reader}'")
         
         # 2) index (explicit only)
+        idx_cfg  = spec.get("index", {}) or {}
+        idx_name = idx_cfg.get("name")
+        idx_fmt  = idx_cfg.get("format")
+
         if idx_name is not None:
+            # Case-insensitive match to the actual column
             if idx_name not in df.columns:
-                raise KeyError(f"{name}: index column '{idx_name}' not found.")
-            if idx_fmt:
-                dt = pd.to_datetime(df[idx_name], format=idx_fmt, errors="coerce")
-            else:
-                dt = pd.to_datetime(df[idx_name], errors="coerce")
+                cols_lower = {c.lower(): c for c in df.columns}
+                if idx_name.lower() in cols_lower:
+                    idx_name = cols_lower[idx_name.lower()]
+                else:
+                    raise KeyError(f"{name}: index column '{idx_name}' not found.")
+
+            raw = df[idx_name]
+
+            # 1) Try the explicit format if provided
+            dt = pd.to_datetime(raw, format=idx_fmt, errors="coerce") if idx_fmt else pd.to_datetime(raw, errors="coerce")
+
+            # 2) If that failed entirely, retry with a tolerant parse (handles mixed formats)
             if dt.isna().all():
-                raise ValueError(f"{name}: failed to parse any timestamps in '{idx_name}'.")
+                dt = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+
+            # 3) Still nothing? Show a sample to debug and stop
+            if dt.isna().all():
+                sample = raw.astype(str).head(3).tolist()
+                raise ValueError(
+                    f"{name}: failed to parse any timestamps in '{idx_name}'. "
+                    f"format={idx_fmt!r}. Sample values: {sample}"
+                )
+
+            # 4) Two-digit year correction (typical %y spillover → 2060s)
+            # Only apply when we see both far-future and historical years.
+            if (dt.dt.year >= 2060).any() and (dt.dt.year <= 1999).any():
+                mask = dt.notna() & (dt.dt.year >= 2060) & (dt.dt.year <= 2099)
+                dt.loc[mask] = dt.loc[mask] - pd.DateOffset(years=100)
+
+            # 5) Set index
             df = df.set_index(dt).drop(columns=[idx_name])
+
+        elif isinstance(df.index, pd.DatetimeIndex):
+            # Already datetime-indexed; accept as-is
+            pass
 
         # 3) rename exactly as declared (no inference)
         if columns_map:
