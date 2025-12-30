@@ -8,6 +8,7 @@ from gymnasium.spaces import Box
 from deepreservoir.drl.rewards import RewardContext
 from deepreservoir.data.metadata import project_metadata
 from deepreservoir.define_env.hydropower_model import navajo_power_generation_model
+from deepreservoir.define_env.spring_peak_release.opportunity_index import OIParams, precompute_oi_by_wy
 
 m = project_metadata()
 
@@ -114,6 +115,29 @@ class NavajoReservoirEnv(Env):
         with open(m.path("elev_area_storage_pickle"), "rb") as f:
             elev_models = pickle.load(f)
         self.capacity_to_elev = elev_models["capacity_to_elevation"]
+
+        # --- SPR Opportunity Index: load params from metadata and precompute ---
+        pm = project_metadata()
+        params_path = pm.path("params.spr_oi_params_json")
+
+        # Load tuned boundary + OI mapping parameters
+        self.spring_oi_params: OIParams = OIParams.load(params_path)
+
+        # Compute per-water-year OI/GO using current model data
+        _df_wy = precompute_oi_by_wy(self.data_raw, self.spring_oi_params)
+        self._spring_oi_by_wy = _df_wy["oi"]
+        self._spring_go_by_wy = _df_wy["go"]
+
+        # Build daily-aligned series so step() lookup is trivial
+        _wy_by_day = (self.data_raw.index.year + (self.data_raw.index.month >= 10)).astype(int)
+        _oi_map = self._spring_oi_by_wy.to_dict()
+        _go_map = self._spring_go_by_wy.to_dict()
+
+        self.spring_oi_daily = pd.Series(_wy_by_day).map(_oi_map).astype(float)
+        self.spring_go_daily = pd.Series(_wy_by_day).map(_go_map).astype("boolean")
+        self.spring_oi_daily.index = self.data_raw.index
+        self.spring_go_daily.index = self.data_raw.index
+
 
         # Internal state
         self.t = 0
@@ -284,6 +308,14 @@ class NavajoReservoirEnv(Env):
             elevation_ft=float(new_elev_ft),
         )
 
+        # Current simulation timestamp. Replace `date` with your step's timestamp variable if different.
+        # For example, if you track a pointer `self.t`, you might use: date = self.data_raw.index[self.t]
+        date = date  # <-- use the same variable you already use to read today's row
+
+        wy = int(date.year + (date.month >= 10))
+        oi_val = float(self.spring_oi_daily.get(date, np.nan))
+        go_val = bool(self.spring_go_daily.get(date, False))
+
         # Build info dict for rewards/logging
         info = {
             "date": date,
@@ -304,6 +336,9 @@ class NavajoReservoirEnv(Env):
             "raw_forcings": row_raw,
             "hydropower_mwh": float(hydropower_mwh),
             "release_scale_penalty": float(scale_penalty),
+            "spring_wy": wy,       # SPR
+            "spring_oi": oi_val,   # SPR opportunity index: ∈ [0,1] or NaN if out of range
+            "spring_go": go_val,   # SPR opportunity index - binary: bool
         }
 
         # Advance internal state
