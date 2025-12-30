@@ -360,11 +360,13 @@ def physics_scale_penalty(ctx: RewardContext) -> float:
     return -5 * penalty  # tune weight as you like
 
 
-@register_reward("esa_spring_peak_release", "baseline")
+@register_reward("esa_spr", "baseline")
 def esa_spring_peak_baseline(ctx: RewardContext) -> float:
     """
-    Reward/penalize how well releases match ESA spring peak hydrograph.
-
-    TODO: implement (likely uses multi-day context, but start with per-step).
+    Simple scaffolding reward that reads the precomputed OI from env info.
+    Maps OI∈[0,1] to [-1,1] so it can combine with other components.
     """
-    raise NotImplementedError
+    oi = ctx.info.get("spring_oi", np.nan)
+    if oi is None or not np.isfinite(oi):
+        return 0.0
+    return float(2.0 * oi - 1.0)

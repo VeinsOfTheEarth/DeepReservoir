@@ -379,6 +379,13 @@ def project_metadata() -> Metadata:
             "kind": "pickle",
             "description": "Piecewise linear E–A–S interpolators based on 2019 data",
         },
+        "spr_oi_params_json": {
+            "path": "data/spring_peak_release/spr_oi_params.json",
+            "kind": "json",
+            "description": "Sigmoid boundary + OI mapping for SPR go/no-go",
+        },
+    
+
     }
 
     return m.resolve_paths()

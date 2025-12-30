@@ -73,19 +73,7 @@ df_xy = df_xy.loc[df_xy.index >= 2000]
 # 3) Labels: attempted SPR (blue) from your 'spe' DataFrame
 attempted = spe["classified_SPE"].reindex(df_xy.index).fillna(False).astype(bool)
 
-# 4) Guess-and-check τ
-out = swe_helpers.plot_hyperbola_rule(
-    x=df_xy["x"], y=df_xy["y"], attempted=attempted,
-    tau=1.05,                 # <- tweak this and re-run
-    x_label="Pre-Spring storage (af) — February mean",
-    y_label="SWE Feb max (mm)",
-    title="Hyperbola go/no-go discriminator",
-    annotate=True, labels=df_xy.index  # optional year labels
-)
-plt.show()
-out  # shows tau, S_ref, P_ref, accuracy, and confusion counts
-
-
+# 4) Guess-and-check parameter fit
 out = swe_helpers.plot_sigmoid_rule(
     x=df_xy["x"], y=df_xy["y"],
     attempted=attempted,
@@ -117,6 +105,7 @@ out = swe_helpers.plot_oi_scatter(
     title="SPR Opportunity Index (colored by OI)",
     contour_levels=(0.5, 0.75, 0.9)
 )
+plt.show()
 
 
 base = mpl.colormaps["Blues"]
@@ -145,3 +134,16 @@ swe_helpers.plot_oi_field(
 )
 plt.show()
 
+## After tuning parameters to desired, this section saves them
+from deepreservoir.data.metadata import project_metadata
+pm = project_metadata()
+out = pm.path("params.spr_oi_params_json")
+out.parent.mkdir(parents=True, exist_ok=True)
+import json
+json.dump({
+    "boundary": {"x0": float(p.x0), "s": float(p.s), "y_low": float(p.y_low), "y_high": float(p.y_high)},
+    "m0": 40.0, "beta": float(beta), "omega_on_line": 0.75,
+    "storage_method": "feb_mean",
+    "swe_metric": "SWE_peak_by_Mar1_mm"
+}, open(out, "w"), indent=2)
+print("Wrote OI params ->", out)
