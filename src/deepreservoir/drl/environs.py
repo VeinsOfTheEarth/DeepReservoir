@@ -129,14 +129,20 @@ class NavajoReservoirEnv(Env):
         self._spring_go_by_wy = _df_wy["go"]
 
         # Build daily-aligned series so step() lookup is trivial
-        _wy_by_day = (self.data_raw.index.year + (self.data_raw.index.month >= 10)).astype(int)
+        _wy_by_day = pd.Series(
+            (self.data_raw.index.year + (self.data_raw.index.month >= 10)).astype(int),
+            index=self.data_raw.index,
+            name="wy",
+        )
         _oi_map = self._spring_oi_by_wy.to_dict()
         _go_map = self._spring_go_by_wy.to_dict()
 
-        self.spring_oi_daily = pd.Series(_wy_by_day).map(_oi_map).astype(float)
-        self.spring_go_daily = pd.Series(_wy_by_day).map(_go_map).astype("boolean")
-        self.spring_oi_daily.index = self.data_raw.index
-        self.spring_go_daily.index = self.data_raw.index
+        # OI is float in [0, 1]; missing water-years become NaN.
+        self.spring_oi_daily = _wy_by_day.map(_oi_map).astype(float)
+
+        # GO is boolean; fill missing water-years with False to avoid pd.NA → bool() errors.
+        _go_daily = _wy_by_day.map(_go_map).astype("boolean").fillna(False)
+        self.spring_go_daily = _go_daily.astype(bool)
 
 
         # Internal state
@@ -307,11 +313,6 @@ class NavajoReservoirEnv(Env):
             cfs_values=float(sanjuan_release_cfs),
             elevation_ft=float(new_elev_ft),
         )
-
-        # Current simulation timestamp. Replace `date` with your step's timestamp variable if different.
-        # For example, if you track a pointer `self.t`, you might use: date = self.data_raw.index[self.t]
-        date = date  # <-- use the same variable you already use to read today's row
-
         wy = int(date.year + (date.month >= 10))
         oi_val = float(self.spring_oi_daily.get(date, np.nan))
         go_val = bool(self.spring_go_daily.get(date, False))

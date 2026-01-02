@@ -12,7 +12,7 @@ def save_plots(
     *,
     df_test: pd.DataFrame,
     outdir: Path | str,
-    df_ep: pd.DataFrame | None = None,
+    df_train_updates: pd.DataFrame | None = None,
     which: str | Sequence[str] | None = "all",
     plot_kwargs: Mapping[str, Mapping[str, object]] | None = None,
     dpi: int = 300,
@@ -26,10 +26,10 @@ def save_plots(
         Test-period rollout dataframe (from DRLModel.evaluate_test()).
     outdir
         Directory where PNGs will be written.
-    df_ep
-        Per-episode reward dataframe (from m.episode_reward_components_
-        or m._reward_components_cb.episode_history). Only required for plots
-        that need episode rewards (episode_mean_rewards).
+    df_train_updates
+        Per-update (per-rollout) training reward dataframe (from
+        m.train_update_metrics_ or m.load_train_update_metrics()). Only required
+        for plots that summarize training updates (train_update_mean_rewards).
     which
         - "all" (default): all plots in PLOT_REGISTRY
         - name of a single plot (e.g. "storage_timeseries")
@@ -64,12 +64,14 @@ def save_plots(
         args: list[object] = []
         if "df_test" in requires:
             args.append(df_test)
-        if "df_ep" in requires:
-            if df_ep is None:
-                raise ValueError(
-                    f"Plot {name!r} requires df_ep but none was provided."
+        if "df_train_updates" in requires:
+            if df_train_updates is None:
+                import warnings
+                warnings.warn(
+                    f"Plot {name!r} requires df_train_updates but none was provided; skipping."
                 )
-            args.append(df_ep)
+                continue
+            args.append(df_train_updates)
 
         kw = dict(plot_kwargs.get(name, {}))
         res = func(*args, **kw)  # type: ignore[misc]
@@ -265,26 +267,44 @@ def plot_storage_timeseries(
     return fig, ax, ax2
 
 
-def plot_episode_mean_rewards(
-    df_ep: pd.DataFrame,
+def plot_train_update_mean_rewards(
+    df_train_updates: pd.DataFrame,
+    *,
+    x_axis: str = "timesteps",
     figsize: tuple[float, float] = (8, 4),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
-    Plot per-episode mean reward for each objective.
+    Plot per-update mean reward for each objective.
 
-    Expects a DataFrame like DRLModel.episode_reward_components_, with:
-      - 'episode_idx' column (or index)
-      - columns starting with 'mean_' for each objective.
+    This uses the per-rollout summaries produced during PPO training, where
+    each row corresponds to one rollout / policy update iteration.
+
+    Expected columns
+    ----------------
+    - 'update_idx' (int)
+    - 'timesteps' (int, optional): cumulative env steps at end of the rollout
+    - 'mean_total_reward' (float, optional)
+    - columns starting with 'mean_' for each objective component, e.g.
+      'mean_dam_safety.storage_band'
+
     """
-    # X-axis: episode index
-    if "episode_idx" in df_ep.columns:
-        x = df_ep["episode_idx"].values
+    # Choose x-axis
+    if x_axis in df_train_updates.columns:
+        x = df_train_updates[x_axis].values
+        xlabel = "Timesteps" if x_axis == "timesteps" else x_axis
+    elif "update_idx" in df_train_updates.columns:
+        x = df_train_updates["update_idx"].values
+        xlabel = "Update"
     else:
-        x = df_ep.index.values
+        x = df_train_updates.index.values
+        xlabel = "Update"
 
-    mean_cols = [c for c in df_ep.columns if c.startswith("mean_")]
-    if not mean_cols:
-        raise ValueError("No columns starting with 'mean_' found in df_ep.")
+    mean_cols = [
+        c for c in df_train_updates.columns
+        if c.startswith("mean_") and c != "mean_total_reward"
+    ]
+    if not mean_cols and "mean_total_reward" not in df_train_updates.columns:
+        raise ValueError("No 'mean_*' columns found in df_train_updates.")
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -294,7 +314,7 @@ def plot_episode_mean_rewards(
         ax.spines[spine].set_visible(False)
 
     ax.tick_params(labelsize=11)
-    ax.set_xlabel("Episode", fontsize=13)
+    ax.set_xlabel(xlabel, fontsize=13)
     ax.set_ylabel("Mean reward per step", fontsize=13)
 
     def get_color_for_objective(obj_key: str, idx: int) -> str:
@@ -311,27 +331,31 @@ def plot_episode_mean_rewards(
     for i, col in enumerate(mean_cols):
         full_key = col[len("mean_") :]   # e.g. 'dam_safety.storage_band'
         color = get_color_for_objective(full_key, i)
-        label = full_key
-
         ax.plot(
             x,
-            df_ep[col].values,
+            df_train_updates[col].values,
             linewidth=1.6,
             color=color,
-            label=label,
+            label=full_key,
         )
 
-    # Total reward = sum of component means (per episode)
-    total_mean = df_ep[mean_cols].sum(axis=1)
+    # Total reward
+    if "mean_total_reward" in df_train_updates.columns:
+        total_mean = df_train_updates["mean_total_reward"].values
+    elif mean_cols:
+        total_mean = df_train_updates[mean_cols].sum(axis=1).values
+    else:
+        total_mean = df_train_updates.index.to_numpy(dtype=float) * 0.0
+
     ax.plot(
         x,
-        total_mean.values,
+        total_mean,
         linewidth=2.0,
         color="black",
         label="total",
     )
 
-    ax.set_title("Per-episode mean reward by objective", fontsize=14)
+    ax.set_title("Per-update mean reward by objective", fontsize=14)
 
     leg = ax.legend(loc="best", frameon=True)
     leg.get_frame().set_alpha(0.9)
@@ -339,7 +363,6 @@ def plot_episode_mean_rewards(
 
     fig.tight_layout()
     return fig, ax
-
 
 def plot_release_timeseries(
     df: pd.DataFrame,
@@ -828,17 +851,17 @@ def plot_hydropower_doy_traces(
 # Plot registry + groups + convenience driver
 # ---------------------------------------------------------------------------
 
-# Each entry: name -> { "func": callable, "requires": ("df_test" / "df_ep"), "filename": str }
+# Each entry: name -> { "func": callable, "requires": ("df_test" / "df_train_updates"), "filename": str }
 PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
     "storage_timeseries": {
         "func": plot_storage_timeseries,
         "requires": ("df_test",),
         "filename": "storage_timeseries.png",
     },
-    "episode_mean_rewards": {
-        "func": plot_episode_mean_rewards,
-        "requires": ("df_ep",),
-        "filename": "episode_mean_rewards.png",
+    "train_update_mean_rewards": {
+        "func": plot_train_update_mean_rewards,
+        "requires": ("df_train_updates",),
+        "filename": "train_update_mean_rewards.png",
     },
     "release_timeseries": {
         "func": plot_release_timeseries,
@@ -873,7 +896,7 @@ PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
 PLOT_GROUPS: dict[str, tuple[str, ...]] = {
     "core": (
         "storage_timeseries",
-        "episode_mean_rewards",
+        "train_update_mean_rewards",
         "release_timeseries",
     ),
     "storage": (
@@ -886,7 +909,7 @@ PLOT_GROUPS: dict[str, tuple[str, ...]] = {
         "hydropower_doy_traces",
     ),
     "rewards": (
-        "episode_mean_rewards",
+        "train_update_mean_rewards",
     ),
     "timeseries": (
         "storage_timeseries",

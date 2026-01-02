@@ -14,14 +14,14 @@ m = DRLModel(
     reward_spec=reward_spec,
     logdir=run_dir,
     device="cpu",
-    n_envs=1,              # try 4 first
+    n_envs=12,              # try 4 first
     use_subproc_vec=False, # start with DummyVecEnv for debugging
 )
 
 m.train(
     total_timesteps=500_000,
     n_steps=4096,
-    batch_size=4096,
+    batch_size=1024,
     n_epochs=10,
     gamma=0.999,
     track_reward_components=True,
@@ -51,35 +51,20 @@ m.load_model("last_model")
 # tt : 512000
 
 # load per-episode reward components
-df_ep = m.load_episode_reward_components()
+df_train_updates = m.load_train_update_metrics()
 
 # evaluate test rollout (for df_test)
 df_test, metrics = m.evaluate_test(
     save_rollout=True,
-    save_plots=False,
+    save_plots=True,
     save_metrics=False,
 )
 
-# now you can call your plot driver
+# 1) save all plots
 drl_plot.save_plots(
     df_test=df_test,
-    df_ep=df_ep,
+    df_train_updates=df_train_updates,
     outdir=m.logdir,
     which="all",
 )
 
-# 1) Save all plots
-drl_plot.save_plots(
-    df_test=df_test,
-    df_ep=df_ep,
-    outdir=m.logdir,
-    which="all",
-)
-
-# 2) If you want to save a subset of plots:
-# drl_plot.save_plots(
-#     df_test=df_test,
-#     df_ep=df_ep,
-#     outdir=m.logdir,
-#     which=["core", "doy"],  # groups
-# )

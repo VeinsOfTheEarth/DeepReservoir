@@ -430,16 +430,16 @@ class DRLModel:
         self.device = device
         self.n_envs = int(n_envs)
         self.use_subproc_vec = bool(use_subproc_vec)
-        self._reward_components_cb = None
-        self.episode_reward_components_ = None
+        self._train_updates_cb = None
+        self.train_update_metrics_ = None
         self.gamma = gamma
 
-        # Load the rewards training data if exist
+        # Load training update metrics if they exist (best-effort)
         try:
-            self.load_episode_reward_components()
+            self.load_train_update_metrics()
         except Exception:
-            # ignore if file not there / broken
             pass
+
 
         # Load data
         self.datasets = load_datasets(n_years_test)
@@ -521,11 +521,12 @@ class DRLModel:
         )
 
         cb_list: list[BaseCallback] = [eval_callback]
-        self._reward_components_cb = None
+        self._train_updates_cb = None
 
         if track_reward_components:
-            self._reward_components_cb = EpisodeRewardComponentsCallback()
-            cb_list.append(self._reward_components_cb)
+            self._train_updates_cb = TrainUpdateRewardComponentsCallback()
+            cb_list.append(self._train_updates_cb)
+
 
         if len(cb_list) == 1:
             callback: BaseCallback = cb_list[0]
@@ -538,15 +539,15 @@ class DRLModel:
             # save policy weights
             self.save_model("last_model")
         finally:
-            # ALWAYS try to persist episode-level reward data if we have it
-            if self._reward_components_cb is not None:
-                df_ep = pd.DataFrame(self._reward_components_cb.episode_history)
+            # ALWAYS try to persist training update metrics if we have them
+            if self._train_updates_cb is not None:
+                df_upd = pd.DataFrame(self._train_updates_cb.update_history)
                 # keep for in-memory use
-                self.episode_reward_components_ = df_ep
+                self.train_update_metrics_ = df_upd
                 # and persist to disk alongside the run
-                out_path = self.logdir / "episode_reward_components.parquet"
-                df_ep.to_parquet(out_path, index=False)
-
+                out_path = self.logdir / "train_update_metrics.parquet"
+                df_upd.to_parquet(out_path, index=False)
+                df_upd.to_csv(out_path.with_suffix(".csv"), index=False)
 
     def save_model(self, name: str = "last_model") -> Path:
         """
@@ -571,20 +572,23 @@ class DRLModel:
         self.agent = PPO.load(path, env=self.train_env, device=self.device)
         return self.agent
 
-    def load_episode_reward_components(self) -> pd.DataFrame | None:
+    def load_train_update_metrics(self) -> pd.DataFrame | None:
         """
-        Load per-episode reward components from disk into
-        self.episode_reward_components_.
+        Load per-update (per-rollout) training reward metrics from disk into
+        self.train_update_metrics_.
+
+        Each row corresponds to one PPO rollout / policy update iteration.
 
         Returns the DataFrame, or None if no file exists.
         """
         import pandas as pd
-        path = self.logdir / "episode_reward_components.parquet"
+        path = self.logdir / "train_update_metrics.parquet"
         if not path.exists():
             return None
-        df_ep = pd.read_parquet(path)
-        self.episode_reward_components_ = df_ep
-        return df_ep
+        df_upd = pd.read_parquet(path)
+        self.train_update_metrics_ = df_upd
+        return df_upd
+
 
     def evaluate_test(
         self,
@@ -608,7 +612,10 @@ class DRLModel:
         )
 
         if save_rollout:
-            df.to_parquet(self.logdir / "eval_test_rollout.parquet")
+            out_path = self.logdir / "eval_test_rollout.parquet"
+            df.to_parquet(out_path)
+            df.to_csv(out_path.with_suffix(".csv"), index=False)
+
 
         if save_plots:
             make_standard_plots(df, self.logdir / "eval_plots")
@@ -620,64 +627,87 @@ class DRLModel:
         return df, metrics_df
 
 
-class EpisodeRewardComponentsCallback(BaseCallback):
+class TrainUpdateRewardComponentsCallback(BaseCallback):
     """
-    Accumulates `info["reward_components"]` over each episode and
-    stores per-episode mean values in `episode_history`.
+    Accumulates step-level reward components over each PPO rollout and stores
+    per-rollout (per-policy-update) mean values.
 
-    Works with VecEnv (n_envs >= 1).
+    Notes
+    -----
+    In SB3 PPO, "a round of training" is one rollout collection of size
+    (n_steps * n_envs) followed by optimization epochs on that rollout buffer.
+    This callback summarizes rewards *per rollout*, which aligns with how PPO
+    actually trains.
+
+    The environment is expected to provide per-step component values in
+    info["reward_components_step"] (or the legacy key info["reward_components"]).
     """
 
     def __init__(self, verbose: int = 0):
         super().__init__(verbose)
-        self.episode_sums: dict[int, dict[str, float]] = {}
-        self.episode_counts: dict[int, int] = {}
-        self.episode_history: list[dict] = []
-        self._next_episode_idx: int = 0
+        self.rollout_sums: dict[str, float] = {}
+        self.rollout_reward_sum: float = 0.0
+        self.rollout_count: int = 0  # number of (env, step) samples
+        self.update_history: list[dict] = []
+        self._update_idx: int = 0
 
     def _on_training_start(self) -> None:
-        n_envs = self.training_env.num_envs
-        self.episode_sums = {i: {} for i in range(n_envs)}
-        self.episode_counts = {i: 0 for i in range(n_envs)}
-        self.episode_history = []
-        self._next_episode_idx = 0
+        self.rollout_sums = {}
+        self.rollout_reward_sum = 0.0
+        self.rollout_count = 0
+        self.update_history = []
+        self._update_idx = 0
 
     def _on_step(self) -> bool:
-        infos = self.locals["infos"]
-        dones = self.locals["dones"]
-        n_envs = len(infos)
+        infos = self.locals.get("infos", [])
+        rewards = self.locals.get("rewards", None)
 
-        for i in range(n_envs):
-            info = infos[i]
+        # Total reward over this VecEnv step
+        if rewards is not None:
+            try:
+                self.rollout_reward_sum += float(np.sum(rewards))
+            except Exception:
+                self.rollout_reward_sum += float(rewards)
 
-            # accumulate this step's components
-            comps = info.get("reward_components", {})
-            if comps:
-                sums = self.episode_sums.setdefault(i, {})
+        # Reward components over this VecEnv step
+        if infos:
+            for info in infos:
+                comps = info.get("reward_components_step", info.get("reward_components", {}))
+                if not comps:
+                    continue
                 for k, v in comps.items():
-                    sums[k] = sums.get(k, 0.0) + float(v)
+                    try:
+                        fv = float(v)
+                    except Exception:
+                        continue
+                    self.rollout_sums[k] = self.rollout_sums.get(k, 0.0) + fv
 
-            # count steps
-            self.episode_counts[i] = self.episode_counts.get(i, 0) + 1
-
-            # if episode ended in this env, finalize stats
-            if dones[i]:
-                count = max(self.episode_counts[i], 1)
-                sums = self.episode_sums.get(i, {})
-
-                rec: dict[str, float | int] = {
-                    "episode_idx": self._next_episode_idx,
-                    "env_idx": i,
-                    "n_steps": count,
-                }
-                for k, total in sums.items():
-                    rec[f"mean_{k}"] = total / count
-
-                self.episode_history.append(rec)
-                self._next_episode_idx += 1
-
-                # reset accumulators for this env
-                self.episode_sums[i] = {}
-                self.episode_counts[i] = 0
+            # Count how many samples we just aggregated
+            self.rollout_count += len(infos)
+        else:
+            # Fallback (shouldn't happen in normal SB3 training)
+            self.rollout_count += 1
 
         return True
+
+    def _on_rollout_end(self) -> None:
+        # Summarize the rollout that just finished
+        count = max(int(self.rollout_count), 1)
+
+        rec: dict[str, float | int] = {
+            "update_idx": int(self._update_idx),
+            "timesteps": int(self.num_timesteps),
+            "rollout_steps": int(self.rollout_count),
+            "mean_total_reward": float(self.rollout_reward_sum / count),
+        }
+
+        for k, total in self.rollout_sums.items():
+            rec[f"mean_{k}"] = float(total / count)
+
+        self.update_history.append(rec)
+        self._update_idx += 1
+
+        # Reset for next rollout
+        self.rollout_sums = {}
+        self.rollout_reward_sum = 0.0
+        self.rollout_count = 0

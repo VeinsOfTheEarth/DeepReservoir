@@ -39,12 +39,11 @@ reload(drl_plot)
 fig, ax, ax2 = drl_plot.plot_storage_timeseries(df_test)
 drl_plot.save(fig, m.logdir / "storage_timeseries.png")
 
-# Episode mean rewards
-cb = m._reward_components_cb
-df_ep = pd.DataFrame(cb.episode_history)
-df_ep = df_ep.sort_values("episode_idx").set_index("episode_idx")
-fig, ax = drl_plot.plot_episode_mean_rewards(df_ep)
-drl_plot.save(fig, m.logdir / "episode_mean_rewards.png")
+# Training update mean rewards
+df_train_updates = m.train_update_metrics_ if m.train_update_metrics_ is not None else m.load_train_update_metrics()
+if df_train_updates is not None and not df_train_updates.empty:
+    fig, ax = drl_plot.plot_train_update_mean_rewards(df_train_updates)
+    drl_plot.save(fig, m.logdir / "train_update_mean_rewards.png")
 
 # Release timeseries
 fig, ax = drl_plot.plot_release_timeseries(df_test)

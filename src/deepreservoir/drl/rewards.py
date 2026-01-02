@@ -360,7 +360,7 @@ def physics_scale_penalty(ctx: RewardContext) -> float:
     return -5 * penalty  # tune weight as you like
 
 
-@register_reward("esa_spr", "baseline")
+@register_reward("esa_spring_peak_release", "baseline")
 def esa_spring_peak_baseline(ctx: RewardContext) -> float:
     """
     Simple scaffolding reward that reads the precomputed OI from env info.
