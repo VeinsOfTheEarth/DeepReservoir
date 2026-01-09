@@ -90,7 +90,6 @@ def build_agent(
     if algo != "ppo":
         raise ValueError(f"Unsupported algo: {algo}")
 
-    # Start from SB3 defaults; only override when user passes a value
     ppo_kwargs: dict = {
         "verbose": 1,
         "seed": seed,
@@ -104,7 +103,6 @@ def build_agent(
         ppo_kwargs["n_epochs"] = n_epochs
     if gamma is not None:
         ppo_kwargs["gamma"] = gamma
-
 
     return PPO("MlpPolicy", env, **ppo_kwargs)
 
@@ -128,9 +126,14 @@ def make_env(
     reward_spec_str: str,
     *,
     is_eval: bool = False,
+    episode_length: int | None = None,
 ) -> gym.Env:
     """
     Build a NavajoReservoirEnv for training or evaluation.
+
+    IMPORTANT:
+      - For training, set episode_length=3600 (to match your Colab behavior)
+      - For eval, use episode_length=None (full series)
     """
     reward_fn = build_reward(reward_spec_str)
 
@@ -139,7 +142,7 @@ def make_env(
         data_norm=data_norm,
         norm_stats=norm_stats,
         reward_fn=reward_fn,
-        episode_length=None,  # full series
+        episode_length=episode_length,
         is_eval=is_eval,
     )
     return env
@@ -153,29 +156,30 @@ def make_vec_env(
     reward_spec_str: str,
     n_envs: int,
     is_eval: bool = False,
+    episode_length: int | None = None,
     use_subproc: bool = False,
 ):
     """
     Build a VecEnv (Dummy or Subproc) of NavajoReservoirEnv instances.
 
-    For training, set is_eval=False; for eval you usually just want 1 env
-    and can skip this helper.
+    For training: is_eval=False, episode_length=3600
+    For eval: usually use a single env, not a VecEnv
     """
     vec_cls = SubprocVecEnv if use_subproc else DummyVecEnv
 
     def _make_single_env():
-        # Wrap your existing make_env
         return make_env(
             data_raw=data_raw,
             data_norm=data_norm,
             norm_stats=norm_stats,
             reward_spec_str=reward_spec_str,
             is_eval=is_eval,
+            episode_length=episode_length,
         )
 
-    # SB3 expects a list of callables that each create an env
-    env_fns = [ _make_single_env for _ in range(n_envs) ]
+    env_fns = [_make_single_env for _ in range(n_envs)]
     return vec_cls(env_fns)
+
 
 # ---------------------------------------------------------------------
 # Evaluation helpers
@@ -190,16 +194,10 @@ def run_test_rollout(
 ) -> pd.DataFrame:
     """
     Load a trained model from `run_dir` and roll it out over the test period.
-
-    Returns a DataFrame with one row per test day, including:
-      - date (index), step, reward
-      - action_raw
-      - reward component columns named rc_<key>
-      - some raw hydrology columns if available
     """
     run_dir = Path(run_dir)
 
-    # 1) Load datasets and build eval env over TEST period
+    # 1) Load datasets and build eval env over TEST period (full series)
     datasets = load_datasets(n_years_test=n_years_test)
     eval_env = make_env(
         data_raw=datasets["test_raw"],
@@ -207,6 +205,7 @@ def run_test_rollout(
         norm_stats=datasets["norm_stats"],
         reward_spec_str=reward_spec,
         is_eval=True,
+        episode_length=None,   # full test series
     )
 
     # 2) Load trained model (no env; we drive eval_env manually)
@@ -221,7 +220,7 @@ def run_test_rollout(
     records: list[dict] = []
 
     while True:
-        # --- date & agent state BEFORE the step ---
+        # date BEFORE step
         if hasattr(eval_env, "_current_date") and callable(eval_env._current_date):  # type: ignore[attr-defined]
             date = eval_env._current_date()  # type: ignore[attr-defined]
         else:
@@ -230,11 +229,9 @@ def run_test_rollout(
             global_idx = start_idx + t
             date = eval_env.data_raw.index[global_idx]
 
-        # Agent storage + elevation
         storage_agent_af = float(eval_env.storage_af)
         elev_agent_ft = float(eval_env.capacity_to_elev(storage_agent_af))
 
-        # --- action and env step ---
         action, _ = agent.predict(obs, deterministic=True)
         next_obs, reward, terminated, truncated, info_step = eval_env.step(action)
         done = bool(terminated or truncated)
@@ -244,7 +241,7 @@ def run_test_rollout(
             "date": pd.to_datetime(date),
             "reward": float(reward),
             "storage_agent_af": storage_agent_af,
-            "elev_ft": elev_agent_ft,          # agent elevation
+            "elev_ft": elev_agent_ft,
         }
 
         # Reward components
@@ -252,7 +249,7 @@ def run_test_rollout(
         for key, val in comps.items():
             rec[f"rc_{key}"] = float(val)
 
-        # Agent releases (from info)
+        # Agent releases
         sanjuan_rel_cfs = info_step.get("sanjuan_release_cfs", None)
         total_rel_cfs = info_step.get("total_release_cfs", None)
         if sanjuan_rel_cfs is not None:
@@ -263,7 +260,6 @@ def run_test_rollout(
         # Historic data for that date
         date_row = eval_env.data_raw.loc[rec["date"]]
 
-        # Historic storage + release, inflow, evap, etc.
         if "storage_af" in date_row.index:
             rec["storage_hist_af"] = float(date_row["storage_af"])
         for col in [
@@ -277,8 +273,7 @@ def run_test_rollout(
             if col in date_row.index:
                 rec[col] = float(date_row[col])
 
-        # --- Hydropower: agent & historic, using elevations already in hand ---
-        # Agent hydropower: use mainstem (San Juan) release + agent elevation
+        # Hydropower: agent & historic
         if sanjuan_rel_cfs is not None:
             hp_agent = navajo_power_generation_model(
                 cfs_values=float(sanjuan_rel_cfs),
@@ -286,7 +281,6 @@ def run_test_rollout(
             )
             rec["hydro_agent_mwh"] = float(hp_agent)
 
-        # Historic hydropower: use historic release + elevation from historic storage
         if "storage_hist_af" in rec and "release_cfs" in rec:
             elev_hist_ft = float(eval_env.capacity_to_elev(rec["storage_hist_af"]))
             hp_hist = navajo_power_generation_model(
@@ -303,20 +297,14 @@ def run_test_rollout(
         if done:
             break
 
-
     df = pd.DataFrame.from_records(records).set_index("date").sort_index()
     return df
 
 
 def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
-    """
-    Generate a basic set of diagnostic plots for the test rollout.
-    Saves PNGs into `outdir`.
-    """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Total reward
     fig, ax = plt.subplots(figsize=(10, 4))
     df["reward"].plot(ax=ax)
     ax.set_title("Total reward over test period")
@@ -325,7 +313,6 @@ def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
     fig.savefig(outdir / "reward_total.png", dpi=150)
     plt.close(fig)
 
-    # Reward components (rc_<key>)
     rc_cols = [c for c in df.columns if c.startswith("rc_")]
     if rc_cols:
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -337,17 +324,16 @@ def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
         fig.savefig(outdir / "reward_components.png", dpi=150)
         plt.close(fig)
 
-    # Storage
-    if "storage_af" in df.columns:
+    # Storage plot: prefer agent storage if present
+    if "storage_agent_af" in df.columns:
         fig, ax = plt.subplots(figsize=(10, 4))
-        df["storage_af"].plot(ax=ax)
-        ax.set_title("Reservoir storage (AF)")
+        df["storage_agent_af"].plot(ax=ax)
+        ax.set_title("Agent simulated storage (AF)")
         ax.set_ylabel("storage [AF]")
         fig.tight_layout()
-        fig.savefig(outdir / "storage_af.png", dpi=150)
+        fig.savefig(outdir / "storage_agent_af.png", dpi=150)
         plt.close(fig)
 
-    # Release vs inflow
     rel_cols = [c for c in ["release_cfs", "inflow_cfs"] if c in df.columns]
     if rel_cols:
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -359,7 +345,6 @@ def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
         fig.savefig(outdir / "release_inflow.png", dpi=150)
         plt.close(fig)
 
-    # San Juan at Farmington
     if "sj_farmington_q_cfs" in df.columns:
         fig, ax = plt.subplots(figsize=(10, 4))
         df["sj_farmington_q_cfs"].plot(ax=ax)
@@ -371,31 +356,25 @@ def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
 
 
 def compute_test_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Compute a simple metrics table from the test rollout.
-    """
     metrics: Dict[str, float] = {}
 
-    # Total and mean reward
     metrics["total_reward"] = float(df["reward"].sum())
     metrics["mean_reward"] = float(df["reward"].mean())
 
-    # Per-component reward metrics
     rc_cols = [c for c in df.columns if c.startswith("rc_")]
     for col in rc_cols:
-        key = col[len("rc_") :]
+        key = col[len("rc_"):]
         metrics[f"sum_rc_{key}"] = float(df[col].sum())
         metrics[f"mean_rc_{key}"] = float(df[col].mean())
 
-    # Simple hydrology diagnostics if present
-    if "storage_af" in df.columns:
-        metrics["mean_storage_af"] = float(df["storage_af"].mean())
-        metrics["min_storage_af"] = float(df["storage_af"].min())
-        metrics["max_storage_af"] = float(df["storage_af"].max())
+    if "storage_agent_af" in df.columns:
+        metrics["mean_storage_agent_af"] = float(df["storage_agent_af"].mean())
+        metrics["min_storage_agent_af"] = float(df["storage_agent_af"].min())
+        metrics["max_storage_agent_af"] = float(df["storage_agent_af"].max())
 
-    if "release_cfs" in df.columns:
-        metrics["mean_release_cfs"] = float(df["release_cfs"].mean())
-        metrics["max_release_cfs"] = float(df["release_cfs"].max())
+    if "release_agent_cfs" in df.columns:
+        metrics["mean_release_agent_cfs"] = float(df["release_agent_cfs"].mean())
+        metrics["max_release_agent_cfs"] = float(df["release_agent_cfs"].max())
 
     if "sj_farmington_q_cfs" in df.columns:
         metrics["mean_sj_farmington_cfs"] = float(df["sj_farmington_q_cfs"].mean())
@@ -418,10 +397,10 @@ class DRLModel:
         seed: int | None = None,
         device: str = "auto",
         gamma: float | None = None,
-        n_envs: int = 1,              
-        use_subproc_vec: bool = False 
+        n_envs: int = 1,
+        use_subproc_vec: bool = False,
+        train_episode_length: int = 3600,   # <-- match your Colab default
     ) -> None:
-        
         self.n_years_test = n_years_test
         self.reward_spec = reward_spec
         self.algo = algo.lower()
@@ -430,6 +409,7 @@ class DRLModel:
         self.device = device
         self.n_envs = int(n_envs)
         self.use_subproc_vec = bool(use_subproc_vec)
+        self.train_episode_length = int(train_episode_length)
         self._train_updates_cb = None
         self.train_update_metrics_ = None
         self.gamma = gamma
@@ -440,11 +420,10 @@ class DRLModel:
         except Exception:
             pass
 
-
         # Load data
         self.datasets = load_datasets(n_years_test)
 
-        # TRAIN ENV: single or VecEnv
+        # TRAIN ENV: 3600-step random windows (Colab behavior)
         if self.n_envs == 1:
             self.train_env = make_env(
                 data_raw=self.datasets["train_raw"],
@@ -452,6 +431,7 @@ class DRLModel:
                 norm_stats=self.datasets["norm_stats"],
                 reward_spec_str=self.reward_spec,
                 is_eval=False,
+                episode_length=self.train_episode_length,
             )
             self.train_env = Monitor(self.train_env)
         else:
@@ -462,22 +442,21 @@ class DRLModel:
                 reward_spec_str=self.reward_spec,
                 n_envs=self.n_envs,
                 is_eval=False,
+                episode_length=self.train_episode_length,
                 use_subproc=self.use_subproc_vec,
             )
 
-        # EVAL ENV: keep it single-env for now
+        # EVAL ENV: full test period (deterministic, start at beginning)
         self.eval_env = make_env(
             data_raw=self.datasets["test_raw"],
             data_norm=self.datasets["test_norm"],
             norm_stats=self.datasets["norm_stats"],
             reward_spec_str=self.reward_spec,
             is_eval=True,
+            episode_length=None,
         )
-        # Wrap in Monitor for correct eval metrics
         self.eval_env = Monitor(self.eval_env)
 
-
-        # Agent will be built in train() or load_model()
         self.agent: PPO | None = None
 
     def train(
@@ -503,7 +482,6 @@ class DRLModel:
             batch_size=batch_size,
             n_epochs=n_epochs,
             gamma=gamma,
-
         )
 
         best_dir = self.logdir / "best"
@@ -527,32 +505,20 @@ class DRLModel:
             self._train_updates_cb = TrainUpdateRewardComponentsCallback()
             cb_list.append(self._train_updates_cb)
 
-
-        if len(cb_list) == 1:
-            callback: BaseCallback = cb_list[0]
-        else:
-            callback = CallbackList(cb_list)
+        callback: BaseCallback = cb_list[0] if len(cb_list) == 1 else CallbackList(cb_list)
 
         try:
-            # main training
             self.agent.learn(total_timesteps=total_timesteps, callback=callback)
-            # save policy weights
             self.save_model("last_model")
         finally:
-            # ALWAYS try to persist training update metrics if we have them
             if self._train_updates_cb is not None:
                 df_upd = pd.DataFrame(self._train_updates_cb.update_history)
-                # keep for in-memory use
                 self.train_update_metrics_ = df_upd
-                # and persist to disk alongside the run
                 out_path = self.logdir / "train_update_metrics.parquet"
                 df_upd.to_parquet(out_path, index=False)
                 df_upd.to_csv(out_path.with_suffix(".csv"), index=False)
 
     def save_model(self, name: str = "last_model") -> Path:
-        """
-        Save the current SB3 agent to `logdir/name.zip`.
-        """
         if self.agent is None:
             raise RuntimeError("No agent to save (train or load a model first).")
         path = self.logdir / name
@@ -563,9 +529,6 @@ class DRLModel:
         return path
 
     def load_model(self, name: str = "last_model") -> PPO:
-        """
-        Load an SB3 agent from `logdir/name.zip` into this DRLModel.
-        """
         path = self.logdir / name
         if path.suffix == "":
             path = path.with_suffix(".zip")
@@ -573,22 +536,12 @@ class DRLModel:
         return self.agent
 
     def load_train_update_metrics(self) -> pd.DataFrame | None:
-        """
-        Load per-update (per-rollout) training reward metrics from disk into
-        self.train_update_metrics_.
-
-        Each row corresponds to one PPO rollout / policy update iteration.
-
-        Returns the DataFrame, or None if no file exists.
-        """
-        import pandas as pd
         path = self.logdir / "train_update_metrics.parquet"
         if not path.exists():
             return None
         df_upd = pd.read_parquet(path)
         self.train_update_metrics_ = df_upd
         return df_upd
-
 
     def evaluate_test(
         self,
@@ -598,24 +551,18 @@ class DRLModel:
         save_plots: bool = True,
         save_metrics: bool = True,
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Roll out the trained policy over the test period and generate:
-          - a test rollout DataFrame
-          - a metrics table DataFrame
-        """
         df = run_test_rollout(
             run_dir=self.logdir,
             reward_spec=self.reward_spec,
             n_years_test=self.n_years_test,
             model_name=model_name,
-            device=self.device,  # or "cpu" if you want eval always on CPU
+            device=self.device,
         )
 
         if save_rollout:
             out_path = self.logdir / "eval_test_rollout.parquet"
             df.to_parquet(out_path)
             df.to_csv(out_path.with_suffix(".csv"), index=False)
-
 
         if save_plots:
             make_standard_plots(df, self.logdir / "eval_plots")
@@ -631,23 +578,13 @@ class TrainUpdateRewardComponentsCallback(BaseCallback):
     """
     Accumulates step-level reward components over each PPO rollout and stores
     per-rollout (per-policy-update) mean values.
-
-    Notes
-    -----
-    In SB3 PPO, "a round of training" is one rollout collection of size
-    (n_steps * n_envs) followed by optimization epochs on that rollout buffer.
-    This callback summarizes rewards *per rollout*, which aligns with how PPO
-    actually trains.
-
-    The environment is expected to provide per-step component values in
-    info["reward_components_step"] (or the legacy key info["reward_components"]).
     """
 
     def __init__(self, verbose: int = 0):
         super().__init__(verbose)
         self.rollout_sums: dict[str, float] = {}
         self.rollout_reward_sum: float = 0.0
-        self.rollout_count: int = 0  # number of (env, step) samples
+        self.rollout_count: int = 0
         self.update_history: list[dict] = []
         self._update_idx: int = 0
 
@@ -662,14 +599,12 @@ class TrainUpdateRewardComponentsCallback(BaseCallback):
         infos = self.locals.get("infos", [])
         rewards = self.locals.get("rewards", None)
 
-        # Total reward over this VecEnv step
         if rewards is not None:
             try:
                 self.rollout_reward_sum += float(np.sum(rewards))
             except Exception:
                 self.rollout_reward_sum += float(rewards)
 
-        # Reward components over this VecEnv step
         if infos:
             for info in infos:
                 comps = info.get("reward_components_step", info.get("reward_components", {}))
@@ -682,16 +617,13 @@ class TrainUpdateRewardComponentsCallback(BaseCallback):
                         continue
                     self.rollout_sums[k] = self.rollout_sums.get(k, 0.0) + fv
 
-            # Count how many samples we just aggregated
             self.rollout_count += len(infos)
         else:
-            # Fallback (shouldn't happen in normal SB3 training)
             self.rollout_count += 1
 
         return True
 
     def _on_rollout_end(self) -> None:
-        # Summarize the rollout that just finished
         count = max(int(self.rollout_count), 1)
 
         rec: dict[str, float | int] = {
@@ -707,7 +639,6 @@ class TrainUpdateRewardComponentsCallback(BaseCallback):
         self.update_history.append(rec)
         self._update_idx += 1
 
-        # Reset for next rollout
         self.rollout_sums = {}
         self.rollout_reward_sum = 0.0
         self.rollout_count = 0
