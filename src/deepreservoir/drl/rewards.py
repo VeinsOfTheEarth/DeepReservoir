@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from deepreservoir.define_env.niip.niip_demand import niip_daily_demand
+from deepreservoir.define_env.spring_peak_release_curve import SpringPeakReleaseCurve
 
 
 # ---------------------------------------------------------------------
@@ -370,3 +371,49 @@ def esa_spring_peak_baseline(ctx: RewardContext) -> float:
     if oi is None or not np.isfinite(oi):
         return 0.0
     return float(2.0 * oi - 1.0)
+
+
+
+# Keeping one global curve instance (cheap + deterministic)
+_SPRING_PEAK_CURVE = SpringPeakReleaseCurve()
+
+
+@register_reward("esa_spring_peak_release", "baseline")
+def esa_spring_peak_baseline(ctx: RewardContext) -> float:
+    """
+    Reward how closely the *San Juan mainstem release* matches the spring peak target curve.
+
+    Uses:
+      - ctx.info["sanjuan_release_cfs"]
+      - ctx.date
+
+    Output:
+      - Inactive outside the spring window -> 0.0
+      - Inside window -> reward in [-1, 1] (1 = perfect match)
+
+    Tuning:
+      - tolerance_cfs controls how forgiving you want to be.
+    """
+    date = pd.to_datetime(ctx.date)
+    target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
+
+    # Outside spring season: no reward signal
+    if target <= 0.0:
+        return 0.0
+
+    actual = float(ctx.info["sanjuan_release_cfs"])
+
+    # --- Simple, robust shaping ---
+    # If error <= tol -> reward close to 1
+    # If error >= 2*tol -> reward -1 (worst)
+    tolerance_cfs = 500.0  # <- adjust (e.g. 250, 500, 1000)
+    err = abs(actual - target)
+
+    # Map err to [-1, 1] linearly:
+    # err=0 => 1
+    # err=tol => 0
+    # err=2*tol or more => -1
+    r = 1.0 - (err / tolerance_cfs)
+    r = float(np.clip(r, -1.0, 1.0))
+
+    return r
