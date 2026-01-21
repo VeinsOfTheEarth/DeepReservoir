@@ -417,3 +417,16 @@ def esa_spring_peak_baseline(ctx: RewardContext) -> float:
     r = float(np.clip(r, -1.0, 1.0))
 
     return r
+
+@register_reward("esa_spring_peak_release", "niip_like")
+def esa_spring_peak_niip_like(ctx: RewardContext) -> float:
+    target = _SPRING_PEAK_CURVE.target_cfs_from_date(ctx.date)
+    if target <= 0.0:
+        return 0.0
+
+    actual = float(ctx.info["sanjuan_release_cfs"])
+
+    if actual >= target:
+        return 1.0
+    else:
+        return max(0.0, actual / (target + 1e-6))
