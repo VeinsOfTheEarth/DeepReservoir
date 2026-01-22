@@ -126,7 +126,7 @@ def make_env(
     reward_spec_str: str,
     *,
     is_eval: bool = False,
-    episode_length: int | None = None,
+    episode_length: int | None = 3600,
 ) -> gym.Env:
     """
     Build a NavajoReservoirEnv for training or evaluation.
