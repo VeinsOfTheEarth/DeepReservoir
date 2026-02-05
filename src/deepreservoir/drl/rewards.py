@@ -132,7 +132,7 @@ def build_composite_reward(
 def parse_objective_spec(spec_str: str) -> Dict[str, str]:
     """
     Format:
-      "dam_safety:storage_band,esa_min_flow:baseline,hydropower:baseline,niip:colab_like"
+      "dam_safety:storage_band,esa_min_flow:baseline,hydropower:baseline,niip"
     """
     spec: Dict[str, str] = {}
     if not spec_str:
@@ -218,7 +218,7 @@ def hydropower_baseline(ctx: RewardContext) -> float:
     """
     Hydropower reward based on daily generation [MWh/day].
 
-    Mirrors your Colab shaping:
+    Mirrors original reward shaping:
       - if < min_mwh -> -0.5
       - else -> linear 0..1 between [min_mwh, max_mwh]
     """
@@ -231,16 +231,16 @@ def hydropower_baseline(ctx: RewardContext) -> float:
     return float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
 
 
-# ---------------- NIIP (Colab-concept) ----------------
+# ---------------- NIIP ----------------
 
 def _niip_total_season_demand_cfs_sum(doy_start: int = 50, doy_end: int = 300) -> float:
     """
     Precompute a season "total demand" scalar for normalization.
     Since timestep is daily, sum(cfs) is proportional to volume over the season,
-    so it works as a stable normalizer (Colab concept: total_niip).
+    so it works as a stable normalizer.
     """
     doys = np.arange(doy_start, doy_end + 1)
-    vals = niip_daily_demand(doys)  # should support vector input in your module
+    vals = niip_daily_demand(doys)  
     vals = np.asarray(vals, dtype=float)
     vals = np.clip(vals, 0.0, None)
     total = float(np.sum(vals))
@@ -276,13 +276,13 @@ def niip_colab_like(ctx: RewardContext) -> float:
     if demand_cfs <= 0.0 or _NIIP_TOTAL_CFS_SUM <= 0.0:
         return 0.0
 
-    # Colab NIIP used Q1 (regular release). In your final env, that maps to sanjuan_release_cfs.
+    
     regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
 
     delta = demand_cfs - regular_release_cfs
     r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
 
-    # Your Colab did not hard-clip, but clipping keeps stability.
+    
     return float(np.clip(r, -1.0, 1.0))
 
 
@@ -310,7 +310,7 @@ _SPRING_PEAK_CURVE = SpringPeakReleaseCurve()
 @register_reward("esa_spring_peak_release", "oi")
 def esa_spring_peak_oi(ctx: RewardContext) -> float:
     """
-    The FIRST SPR reward (OI-based), as you requested.
+    The FIRST SPR reward (OI-based)
 
     Reads OI from env info:
       ctx.info["spring_oi"] in [0,1] (or NaN)
