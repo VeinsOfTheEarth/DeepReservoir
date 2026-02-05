@@ -161,7 +161,7 @@ def dam_safety_baseline(ctx: RewardContext) -> float:
 @register_reward("dam_safety", "storage_band")
 def dam_safety_storage_band(ctx: RewardContext) -> float:
     """
-    Colab-like shaping around a target storage band.
+    Original reward shaping around a target storage band.
     Returns in [-10, 10] (scaled) so it "matters".
     """
     storage = float(ctx.info["storage_af"])
