@@ -263,7 +263,7 @@ def run_test_rollout(
             if col in date_row.index:
                 rec[col] = float(date_row[col])
 
-        # Hydropower: agent uses component #2 by Colab intent (if present)
+        # Hydropower: agent uses component #2 similar to original code(if present)
         if "release_comp2_cfs" in rec:
             hp_agent = navajo_power_generation_model(
                 cfs_values=float(rec["release_comp2_cfs"]),
@@ -294,7 +294,7 @@ def run_test_rollout(
 
 def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
     """
-    Colab-like plots:
+    Original-codeplots:
       - total reward
       - reward components
       - storage actual vs predicted
@@ -501,10 +501,10 @@ class DRLModel:
         """
         Train PPO.
 
-        Colab equivalence:
+        Original code equivalence:
           total_timesteps = n_episodes * episode_length_train
 
-        Note: This matches your Colab style most closely when n_envs=1.
+        Note: This matches the original code style most closely when n_envs=1.
         If n_envs>1, SB3 will collect more samples per wall-clock step.
         """
         device_eff = device or self.device
