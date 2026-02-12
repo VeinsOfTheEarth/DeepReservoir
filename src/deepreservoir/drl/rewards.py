@@ -254,7 +254,7 @@ _NIIP_TOTAL_CFS_SUM = _niip_total_season_demand_cfs_sum(50, 300)
 @register_reward("niip", "colab_like")
 def niip_colab_like(ctx: RewardContext) -> float:
     """
-    NIIP reward conceptually like your Colab code.
+    NIIP reward conceptually like teh original code.
 
     Active DOY 50–300.
 
@@ -349,26 +349,26 @@ def esa_spring_peak_curve(ctx: RewardContext) -> float:
     r = 1.0 - (err / (tolerance_cfs + 1e-9))
     return float(np.clip(r, -1.0, 1.0))
 
-# @register_reward("esa_spring_peak_release", "farmington_10k")
-# def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
-#     """
-#     SPR bonus: during SPR season only, reward if (Animas + San Juan release) at Farmington >= 10,000 cfs.
+@register_reward("esa_spring_peak_release", "farmington_10k")
+def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
+    """
+    SPR bonus: during SPR season only, reward if (Animas + San Juan release) at Farmington >= 10,000 cfs.
 
-#     Uses:
-#       - ctx.info["sj_at_farmington_cfs"]  (already computed in env)
-#       - SpringPeakReleaseCurve to determine whether we are inside the SPR window
+    Uses:
+      - ctx.info["sj_at_farmington_cfs"]  (already computed in env)
+      - SpringPeakReleaseCurve to determine whether we are inside the SPR window
 
-#     Returns:
-#       - 0.0 outside SPR window
-#       - +1.0 if threshold met during SPR window, else 0.0
-#     """
-#     date = pd.to_datetime(ctx.date)
+    Returns:
+      - 0.0 outside SPR window
+      - +1.0 if threshold met during SPR window, else 0.0
+    """
+    date = pd.to_datetime(ctx.date)
 
-#     # Use the SPR curve as the "season gate" (active only when curve is active)
-#     target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
-#     if target <= 0.0:
-#         return 0.0  # outside SPR window
+    # Use the SPR curve as the "season gate" (active only when curve is active)
+    target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
+    if target <= 0.0:
+        return 0.0  # outside SPR window
 
-#     q_farm = float(ctx.info.get("sj_at_farmington_cfs", 0.0))
+    q_farm = float(ctx.info.get("sj_at_farmington_cfs", 0.0))
 
-#     return 1.0 if q_farm >= 10_000.0 else 0.0
+    return 1.0 if q_farm >= 10_000.0 else 0.0
