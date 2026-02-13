@@ -349,26 +349,76 @@ def esa_spring_peak_curve(ctx: RewardContext) -> float:
     r = 1.0 - (err / (tolerance_cfs + 1e-9))
     return float(np.clip(r, -1.0, 1.0))
 
+# @register_reward("esa_spring_peak_release", "farmington_10k")
+# def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
+#     """
+#     SPR bonus: during SPR season only, reward if (Animas + San Juan release) at Farmington >= 10,000 cfs.
+
+#     Uses:
+#       - ctx.info["sj_at_farmington_cfs"]  (already computed in env)
+#       - SpringPeakReleaseCurve to determine whether we are inside the SPR window
+
+#     Returns:
+#       - 0.0 outside SPR window
+#       - +1.0 if threshold met during SPR window, else 0.0
+#     """
+#     date = pd.to_datetime(ctx.date)
+
+#     # Use the SPR curve as the "season gate" (active only when curve is active)
+#     target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
+#     if target <= 0.0:
+#         return 0.0  # outside SPR window
+
+#     q_farm = float(ctx.info.get("sj_at_farmington_cfs", 0.0))
+
+#     return 1.0 if q_farm >= 10_000.0 else 0.0
+
 @register_reward("esa_spring_peak_release", "farmington_10k")
 def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
     """
-    SPR bonus: during SPR season only, reward if (Animas + San Juan release) at Farmington >= 10,000 cfs.
+    SPR window reward: encourage (Animas + San Juan release) >= 10,000 cfs at Farmington,
+    and favor "simultaneous-ish" peaking (both contribute meaningfully).
 
     Uses:
-      - ctx.info["sj_at_farmington_cfs"]  (already computed in env)
-      - SpringPeakReleaseCurve to determine whether we are inside the SPR window
+      - ctx.date
+      - ctx.info["raw_forcings"]["animas_farmington_q_cfs"]
+      - ctx.info["sanjuan_release_cfs"]
 
     Returns:
-      - 0.0 outside SPR window
-      - +1.0 if threshold met during SPR window, else 0.0
+      - 0 outside SPR window
+      - [0, 1] inside window
     """
     date = pd.to_datetime(ctx.date)
 
-    # Use the SPR curve as the "season gate" (active only when curve is active)
+    # Use the SPR curve to define the "SPR window"
     target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
     if target <= 0.0:
-        return 0.0  # outside SPR window
+        return 0.0
 
-    q_farm = float(ctx.info.get("sj_at_farmington_cfs", 0.0))
+    row = ctx.info.get("raw_forcings", None)
+    if row is None or "animas_farmington_q_cfs" not in row.index:
+        return 0.0
 
-    return 1.0 if q_farm >= 10_000.0 else 0.0
+    animas = float(row["animas_farmington_q_cfs"])
+    sanjuan = float(ctx.info.get("sanjuan_release_cfs", 0.0))
+
+    total = animas + sanjuan
+
+    # Gate: only reward if we reach the threshold
+    threshold = 10_000.0
+    if total < threshold:
+        return 0.0
+
+    # How far above threshold? (soft ramp up to 1.0)
+    # e.g., +0 at 10k, +1 at 12k
+    ramp = 2_000.0
+    magnitude = (total - threshold) / ramp
+    magnitude = float(np.clip(magnitude, 0.0, 1.0))
+
+    # "Simultaneous peak" encouragement:
+    # balance ~ 1 if animas ≈ sanjuan, ~0 if one dominates the sum.
+    balance = 1.0 - (abs(animas - sanjuan) / (total + 1e-6))
+    balance = float(np.clip(balance, 0.0, 1.0))
+
+    return magnitude * balance
+
