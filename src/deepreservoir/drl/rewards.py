@@ -251,7 +251,7 @@ def _niip_total_season_demand_cfs_sum(doy_start: int = 50, doy_end: int = 300) -
 _NIIP_TOTAL_CFS_SUM = _niip_total_season_demand_cfs_sum(50, 300)
 
 
-@register_reward("niip", "colab_like")
+@register_reward("niip", "baseline")
 def niip_colab_like(ctx: RewardContext) -> float:
     """
     NIIP reward conceptually like teh original code.
