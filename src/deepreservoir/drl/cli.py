@@ -25,11 +25,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Number of (water) years to reserve for testing (most recent).",
     )
+#    parser.add_argument(
+#        "--total-timesteps",
+#        type=int,
+#        default=400_000,
+#        help="Total training timesteps for PPO.",
+#    )
     parser.add_argument(
-        "--total-timesteps",
+        "--episode-length-train",
         type=int,
-        default=400_000,
-        help="Total training timesteps for PPO.",
+        default=360,
+        help="Total length of steps per episode.",
     )
     parser.add_argument(
         "--seed",
@@ -50,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="dam_safety:storage_band",
         help=(
             "Comma-separated objective:variant pairs, e.g. "
-            "'dam_safety:storage_band,esa_min_flow:baseline,hydropower:baseline,niip:baseline'"
+            "'dam_safety:storage_band,esa_min_flow:baseline,hydropower:baseline,niip:colab_like'"
         ),
     )
     parser.add_argument(
@@ -73,8 +79,10 @@ def main(argv=None) -> None:
         algo=args.algo,
         logdir=args.logdir,
         seed=args.seed,
+        episode_length_train=args.episode_length_train,
     )
-    drlm.train(total_timesteps=args.total_timesteps,)
+    #drlm.train(total_timesteps=args.total_timesteps,)
+    drlm.train()
 
 if __name__ == "__main__":
     main()
