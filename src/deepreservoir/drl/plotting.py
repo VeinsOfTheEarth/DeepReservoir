@@ -841,6 +841,83 @@ def plot_hydropower_doy_traces(
     return fig, ax
 
 
+def plot_spr_farmington_10k_timeseries(
+    df: pd.DataFrame,
+    *,
+    threshold_cfs: float = 10_000.0,
+    figsize: tuple[float, float] = (10, 4),
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    SPR plot:
+      x-axis: date
+      y-axis: Farmington discharge = (agent San Juan release) + (observed Animas gauge)
+      - horizontal line at threshold (default 10,000 cfs)
+      - dots on dates where discharge >= threshold
+
+    Expected df columns:
+      - 'sanjuan_release_cfs'        (agent release component)
+      - 'animas_farmington_q_cfs'    (gauge data)
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("df.index must be a DatetimeIndex for time series plots.")
+
+    required = ["sanjuan_release_cfs", "animas_farmington_q_cfs"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"df is missing required columns: {missing}")
+
+    x = df.index
+    sanjuan = df["sanjuan_release_cfs"].astype(float)
+    animas = df["animas_farmington_q_cfs"].astype(float)
+
+    farmington = sanjuan + animas
+    exceed = farmington >= float(threshold_cfs)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Clean style (match your plotting style)
+    ax.grid(True, which="major", linestyle=":", alpha=0.6)
+    for spine in ("top",):
+        ax.spines[spine].set_visible(False)
+
+    ax.tick_params(labelsize=11)
+    ax.set_xlabel("Date", fontsize=13)
+    ax.set_ylabel("Discharge at Farmington [cfs]", fontsize=13)
+
+    # Main line
+    ax.plot(
+        x,
+        farmington.values,
+        linewidth=1.8,
+        label="Farmington = San Juan(agent) + Animas(gauge)",
+    )
+
+    # Threshold line
+    ax.axhline(
+        float(threshold_cfs),
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Threshold = {float(threshold_cfs):,.0f} cfs",
+    )
+
+    # Dots where exceed
+    if exceed.any():
+        ax.scatter(
+            x[exceed],
+            farmington.loc[exceed].values,
+            s=22,
+            zorder=5,
+            label=f"Exceedances (n={int(exceed.sum())})",
+        )
+
+    ax.set_title("SPR: Farmington discharge and 10,000 cfs threshold", fontsize=14)
+
+    leg = ax.legend(loc="best", frameon=True)
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_facecolor("white")
+
+    fig.tight_layout()
+    return fig, ax
 
 
 
@@ -889,6 +966,12 @@ PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
         "requires": ("df_test",),
         "filename": "hydropower_doy_traces.png",
     },
+
+    "spr_farmington_10k_timeseries": {
+        "func": plot_spr_farmington_10k_timeseries,
+        "requires": ("df_test",),
+        "filename": "spr_farmington_10k_timeseries.png",
+    },   
 }
 
 
@@ -920,6 +1003,14 @@ PLOT_GROUPS: dict[str, tuple[str, ...]] = {
         "storage_doy_traces",
         "hydropower_doy",
         "hydropower_doy_traces",
+    ),
+    "spr": (
+        "spr_farmington_10k_timeseries",
+    ),   
+    "timeseries": (
+        "storage_timeseries",
+        "release_timeseries",
+        "spr_farmington_10k_timeseries",
     ),
 }
 
