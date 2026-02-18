@@ -240,8 +240,10 @@ def run_test_rollout(
 
         # Component releases (use env’s native keys)
         if "sanjuan_release_cfs" in info_step:
+            rec["sanjuan_release_cfs"] = float(info_step["sanjuan_release_cfs"])
             rec["release_comp1_cfs"] = float(info_step["sanjuan_release_cfs"])
         if "niip_release_cfs" in info_step:
+            rec["niip_release_cfs"] = float(info_step["niip_release_cfs"])
             rec["release_comp2_cfs"] = float(info_step["niip_release_cfs"])
         if "total_release_cfs" in info_step:
             rec["release_agent_cfs"] = float(info_step["total_release_cfs"])
