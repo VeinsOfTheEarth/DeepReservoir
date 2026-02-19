@@ -994,10 +994,6 @@ PLOT_GROUPS: dict[str, tuple[str, ...]] = {
     "rewards": (
         "train_update_mean_rewards",
     ),
-    "timeseries": (
-        "storage_timeseries",
-        "release_timeseries",
-    ),
     "doy": (
         "storage_doy",
         "storage_doy_traces",
