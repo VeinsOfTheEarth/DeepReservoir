@@ -421,3 +421,32 @@ def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
     balance = float(np.clip(balance, 0.0, 1.0))
 
     return 2 * magnitude * balance
+
+@register_reward("esa_spring_peak_release", "farmington_10k_shaped")
+def spr_farmington_10k_shaped(ctx: RewardContext) -> float:
+    """
+    Reward Farmington discharge approaching/exceeding 10k during SPR window.
+    Farmington approx = Animas(gauge) + San Juan release (agent)
+    Uses spring_oi as the SPR window mask (OI>0 means in window).
+    """
+    oi = float(ctx.info.get("spring_oi", np.nan))
+    if not np.isfinite(oi) or oi <= 0.0:
+        return 0.0  # outside SPR window
+
+    animas = float(ctx.info["raw_forcings"].get("animas_farmington_q_cfs", 0.0))
+    sanjuan = float(ctx.info.get("sanjuan_release_cfs", 0.0))
+    farm = animas + sanjuan
+
+    thr = 10_000.0
+
+    # Shaping: value in [0,1] as you approach 10k
+    # Example: 0 at 6k, ~1 at 10k (tune low_ref)
+    low_ref = 6_000.0
+    shaped = (farm - low_ref) / (thr - low_ref + 1e-6)
+    shaped = float(np.clip(shaped, 0.0, 1.0))
+
+    # Bonus if you actually exceed threshold
+    bonus = 1.0 if farm >= thr else 0.0
+
+    # Combine; keep magnitude modest (weights will do the heavy lifting)
+    return 0.7 * shaped + 0.3 * bonus
