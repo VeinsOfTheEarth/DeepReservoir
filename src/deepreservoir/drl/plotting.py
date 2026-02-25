@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
+from deepreservoir.define_env.spring_peak_release_curve import SpringPeakReleaseCurve
 
 def save_plots(
     *,
@@ -911,6 +912,127 @@ def plot_spr_farmington_10k_timeseries(
         )
 
     ax.set_title("SPR: Farmington discharge and 10,000 cfs threshold", fontsize=14)
+
+    leg = ax.legend(loc="best", frameon=True)
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_facecolor("white")
+
+    fig.tight_layout()
+    return fig, ax
+
+# Keeping one global curve instance (cheap + deterministic)
+_SPRING_PEAK_CURVE = SpringPeakReleaseCurve()
+
+
+def plot_spr_farmington_components_and_demand_timeseries(
+    df: pd.DataFrame,
+    *,
+    threshold_cfs: float = 10_000.0,
+    figsize: tuple[float, float] = (10, 4),
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    SPR plot (expanded):
+      x-axis: date
+      y-axis: discharge at Farmington [cfs]
+
+    Curves:
+      1) Total Farmington = San Juan(agent) + Animas(gauge)
+      2) San Juan(agent) component
+      3) Animas(gauge) component
+      4) SPR demand/target curve (repeated yearly by evaluating target_cfs_from_date for each date)
+
+    Also includes:
+      - horizontal threshold line (default 10,000 cfs)
+      - dots where total Farmington discharge >= threshold
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("df.index must be a DatetimeIndex for time series plots.")
+
+    required = ["sanjuan_release_cfs", "animas_farmington_q_cfs"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"df is missing required columns: {missing}")
+
+    x = df.index
+    sanjuan = df["sanjuan_release_cfs"].astype(float)
+    animas = df["animas_farmington_q_cfs"].astype(float)
+
+    farmington = sanjuan + animas
+    exceed = farmington >= float(threshold_cfs)
+
+    # SPR demand curve repeated for every date in the timeseries
+    # (the curve object decides "outside window" -> 0)
+    spr_demand = pd.Series(
+        [_SPRING_PEAK_CURVE.target_cfs_from_date(pd.to_datetime(d)) for d in x],
+        index=x,
+        dtype=float,
+        name="spr_demand_cfs",
+    )
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Clean style (match your plotting style)
+    ax.grid(True, which="major", linestyle=":", alpha=0.6)
+    for spine in ("top",):
+        ax.spines[spine].set_visible(False)
+
+    ax.tick_params(labelsize=11)
+    ax.set_xlabel("Date", fontsize=13)
+    ax.set_ylabel("Discharge at Farmington [cfs]", fontsize=13)
+
+    # Total Farmington
+    ax.plot(
+        x,
+        farmington.values,
+        linewidth=2.0,
+        label="Total Farmington (San Juan + Animas)",
+    )
+
+    # Components
+    ax.plot(
+        x,
+        sanjuan.values,
+        linewidth=1.4,
+        alpha=0.9,
+        label="San Juan release (agent)",
+    )
+    ax.plot(
+        x,
+        animas.values,
+        linewidth=1.4,
+        alpha=0.9,
+        label="Animas (gauge)",
+    )
+
+    # SPR demand curve
+    ax.plot(
+        x,
+        spr_demand.values,
+        linewidth=1.6,
+        linestyle="--",
+        alpha=0.9,
+        label="SPR demand curve",
+    )
+
+    # Threshold line
+    ax.axhline(
+        float(threshold_cfs),
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Threshold = {float(threshold_cfs):,.0f} cfs",
+    )
+
+    # Dots where exceed
+    if exceed.any():
+        ax.scatter(
+            x[exceed],
+            farmington.loc[exceed].values,
+            s=22,
+            zorder=5,
+            label=f"Exceedances (n={int(exceed.sum())})",
+        )
+
+    ax.set_title("SPR: Farmington discharge components + SPR demand curve", fontsize=14)
 
     leg = ax.legend(loc="best", frameon=True)
     leg.get_frame().set_alpha(0.9)
