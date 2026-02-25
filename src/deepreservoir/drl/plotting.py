@@ -1093,7 +1093,12 @@ PLOT_REGISTRY: dict[str, Mapping[str, object]] = {
         "func": plot_spr_farmington_10k_timeseries,
         "requires": ("df_test",),
         "filename": "spr_farmington_10k_timeseries.png",
-    },   
+    },
+    "spr_farmington_components_and_demand_timeseries": {
+       "func": plot_spr_farmington_components_and_demand_timeseries,
+       "requires": ("df_test",),
+       "filename": "spr_farmington_components_and_demand_timeseries.png",
+    },
 }
 
 
@@ -1124,6 +1129,7 @@ PLOT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "spr": (
         "spr_farmington_10k_timeseries",
+        "spr_farmington_components_and_demand_timeseries",
     ),   
     "timeseries": (
         "storage_timeseries",
