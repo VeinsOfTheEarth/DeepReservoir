@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Dict, Any, List, Tuple, Optional, Mapping
+from typing import Callable, Dict, Any, List, Tuple, Optional, Mapping, Union
 
 import numpy as np
 import pandas as pd
@@ -19,6 +19,15 @@ from deepreservoir.define_env.spring_peak_release_curve import SpringPeakRelease
 class RewardContext:
     """
     Information needed to compute reward for a single step.
+
+    Notes on alpha
+    --------------
+    Each reward component can be assigned an ``alpha`` via the reward spec.
+    The CompositeReward sets ``ctx.alpha`` (and ctx.objective/ctx.variant)
+    before calling each component function.
+
+    Convention (for now): reward functions should return an *unscaled* value
+    and CompositeReward applies the alpha multiplier.
     """
     t: int                       # step index (global idx)
     date: pd.Timestamp           # current date
@@ -26,6 +35,11 @@ class RewardContext:
     action: np.ndarray           # current action (raw [-1,1])
     next_obs: np.ndarray         # next observation (normalized)
     info: Dict[str, Any]         # extra per-step info (raw series, flags, etc.)
+
+    # Set by CompositeReward before calling each component reward function.
+    objective: str | None = None
+    variant: str | None = None
+    alpha: float = 1.0
 
 
 RewardFn = Callable[[RewardContext], float]
@@ -68,6 +82,7 @@ def register_reward(objective: str, variant: str) -> Callable[[RewardFn], Reward
 class RewardComponent:
     objective: str
     variant: str
+    alpha: float
     weight: float
     fn: RewardFn
 
@@ -91,7 +106,15 @@ class CompositeReward:
         breakdown: Dict[str, float] = {}
 
         for comp in self.components:
-            r = float(comp.fn(ctx))
+            # Provide component context to the reward function.
+            ctx.objective = comp.objective
+            ctx.variant = comp.variant
+            ctx.alpha = float(comp.alpha)
+
+            base = float(comp.fn(ctx))
+            # For now, alpha is a simple multiplier applied outside the reward
+            # function (reward functions may *read* ctx.alpha in the future).
+            r = float(comp.alpha) * base
             weighted = comp.weight * r
             breakdown[comp.key] = float(weighted)
             total += weighted
@@ -100,7 +123,7 @@ class CompositeReward:
 
 
 def build_composite_reward(
-    spec: Dict[str, str],
+    spec: Mapping[str, Union[str, "ObjectiveSpec"]],
     weights: Optional[Dict[str, float]] = None,
 ) -> CompositeReward:
     """
@@ -110,7 +133,14 @@ def build_composite_reward(
     components: List[RewardComponent] = []
     weights = weights or {}
 
-    for objective, variant in spec.items():
+    for objective, sel in spec.items():
+        if isinstance(sel, ObjectiveSpec):
+            variant = sel.variant
+            alpha = float(sel.alpha)
+        else:
+            variant = str(sel)
+            alpha = 1.0
+
         if objective not in REWARD_REGISTRY:
             raise KeyError(
                 f"Unknown objective {objective!r}. Known: {list(REWARD_REGISTRY.keys())}"
@@ -124,24 +154,78 @@ def build_composite_reward(
 
         fn = variants[variant]
         w = float(weights.get(objective, 1.0))
-        components.append(RewardComponent(objective, variant, w, fn))
+        components.append(RewardComponent(objective, variant, alpha, w, fn))
 
     return CompositeReward(components)
 
 
-def parse_objective_spec(spec_str: str) -> Dict[str, str]:
+@dataclass(frozen=True)
+class ObjectiveSpec:
+    """Parsed objective selection from reward_spec.
+
+    Attributes
+    ----------
+    variant
+        The registered reward variant name, e.g. "baseline".
+    alpha
+        A per-objective parameter (currently used as a multiplier). Defaults to 1.
     """
-    Format:
-      "dam_safety:storage_band,esa_min_flow:baseline,hydropower:baseline,niip"
+
+    variant: str
+    alpha: float = 1.0
+
+
+def parse_objective_spec(spec_str: str) -> Dict[str, ObjectiveSpec]:
     """
-    spec: Dict[str, str] = {}
+    Format
+    ------
+    Comma-separated tokens. Each token may be:
+
+      - "objective"                      -> variant="baseline", alpha=1
+      - "objective:variant"              -> alpha=1
+      - "objective:variant@alpha"        -> alpha parsed as float
+
+    Examples
+    --------
+      "dam_safety:storage_band@0.5,esa_min_flow:baseline,hydropower"
+    """
+    spec: Dict[str, ObjectiveSpec] = {}
     if not spec_str:
         return spec
 
     pairs = [s.strip() for s in spec_str.split(",") if s.strip()]
     for token in pairs:
-        obj, variant = [p.strip() for p in token.split(":", 1)]
-        spec[obj] = variant
+        # Allow "objective" (implies baseline)
+        if ":" not in token:
+            obj = token.strip()
+            if not obj:
+                continue
+            spec[obj] = ObjectiveSpec("baseline", 1.0)
+            continue
+
+        obj, rest = [p.strip() for p in token.split(":", 1)]
+        if not obj:
+            continue
+
+        alpha = 1.0
+        variant = rest
+
+        # Variant may include @alpha (preferred)
+        if "@" in rest:
+            variant, alpha_str = [p.strip() for p in rest.split("@", 1)]
+            try:
+                alpha = float(alpha_str)
+            except Exception:
+                alpha = 1.0
+        else:
+            # If '@' is not present, alpha defaults to 1.0.
+            # For robustness, tolerate stray extra ':' segments by taking the first as the variant.
+            variant = rest.split(":", 1)[0].strip()
+
+        if not variant:
+            variant = "baseline"
+
+        spec[obj] = ObjectiveSpec(variant, alpha)
     return spec
 
 
@@ -162,7 +246,6 @@ def dam_safety_baseline(ctx: RewardContext) -> float:
 def dam_safety_storage_band(ctx: RewardContext) -> float:
     """
     Original reward shaping around a target storage band.
-    Returns in [-10, 10] (scaled) so it "matters".
     """
     storage = float(ctx.info["storage_af"])
     s_min = 500_000.0
@@ -176,7 +259,7 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     x = (storage - target) / span
     r = 1.0 - x**2
     r = float(np.clip(r, -1.0, 1.0))
-    return 5.0 * r
+    return r
 
 
 @register_reward("esa_min_flow", "baseline")
@@ -299,7 +382,8 @@ def physics_penalty(ctx: RewardContext) -> float:
     """
     cap = float(ctx.info.get("release_cap_penalty", 0.0))
     phys = float(ctx.info.get("release_phys_penalty", 0.0))
-    return -5.0 * (cap + phys)
+    r = cap + phys
+    return r
 
 
 # ---------------- SPR rewards ----------------
