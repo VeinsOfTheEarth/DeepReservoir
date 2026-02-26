@@ -1,3 +1,4 @@
+# deepreservoir/drl/environs.py
 import pickle
 import numpy as np
 import pandas as pd
@@ -8,7 +9,10 @@ from gymnasium.spaces import Box
 from deepreservoir.drl.rewards import RewardContext
 from deepreservoir.data.metadata import project_metadata
 from deepreservoir.define_env.hydropower_model import navajo_power_generation_model
-from deepreservoir.define_env.spring_peak_release.opportunity_index import OIParams, precompute_oi_by_wy
+from deepreservoir.define_env.spring_peak_release.opportunity_index import (
+    OIParams,
+    precompute_oi_by_wy,
+)
 
 m = project_metadata()
 
@@ -20,21 +24,14 @@ class NavajoReservoirEnv(Env):
     """
     Navajo Reservoir environment (daily timestep).
 
-    ACTION (daily releases)
-    -----------------------
-    action: np.array shape (2,), each in [-1, 1]
-        action[0]  → San Juan mainstem release, mapped to sanjuan_release_cfs [cfs]
-        action[1]  → NIIP diversion release, mapped to niip_release_cfs [cfs]
+    Multi-action PPO (single agent, 2 continuous actions):
+      action[0] -> release component #1 (mapped to cfs)
+      action[1] -> release component #2 (mapped to cfs)
 
-    OBSERVATION (normalized)
-    ------------------------
-    obs_cols (in order):
-        storage_af          : normalized storage (from simulated storage_af)
-        inflow_cfs          : normalized inflow
-        evap_af             : normalized evaporation (if present)   <-- added
-        sj_farmington_q_cfs : normalized flow at Farmington (if present)
-        sj_bluff_q_cfs      : normalized flow at Bluff (if present)
-        doy                 : day-of-year / 366
+    Total release is the sum of both components and is used in mass balance.
+
+    Observation (fixed order, Colab-aligned):
+      [ storage_norm, evap_norm, inflow_norm, doy ]
     """
 
     metadata = {"render_modes": []}
@@ -47,7 +44,7 @@ class NavajoReservoirEnv(Env):
         reward_fn,
         episode_length: int | None = None,
         min_release_cfs: float = 0.0,
-        max_release_cfs: float = 5000.0,
+        max_total_release_cfs: float = 5000.0,  # total cap like Colab
         is_eval: bool = False,
     ):
         super().__init__()
@@ -62,73 +59,63 @@ class NavajoReservoirEnv(Env):
         self.dates = self.data_raw.index.to_list()
         self.n_steps = len(self.dates)
 
-        # Episode length (in steps); default is full series
-        self.episode_length = episode_length or self.n_steps
+        # Episode length (in steps); default full series
+        self.episode_length = (
+            int(episode_length) if episode_length is not None else self.n_steps
+        )
 
-        # Release limits (per outlet) in cfs
+        # Release limits (TOTAL) in cfs, matching Colab intent
         self.min_release_cfs = float(min_release_cfs)
-        self.max_release_cfs = float(max_release_cfs)
+        self.max_total_release_cfs = float(max_total_release_cfs)
 
-        # Storage safety band (raw AF) – used by dam_safety rewards
+        # Storage safety band (raw AF)
         self.min_storage_af = 500_000.0
         self.max_storage_af = 1_731_750.0
 
         # ACTION SPACE: 2 releases in [-1, 1]
         self.action_space = Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
 
-        # Create storage for computing 2-day lagged discharge at Farmington proxy
+        # For optional lagged discharge proxy
         self.sj_at_farmington_history = deque(maxlen=3)
 
-        # OBSERVATION SPACE: choose normalized columns available to agent
-        # NOTE: storage_af is recomputed from simulated storage, not taken from data_norm
-        obs_cols = []
+        # ---- Observation schema checks ----
+        # We REQUIRE raw columns for mass balance:
+        required_raw = ["storage_af", "inflow_cfs", "evap_af"]
+        for c in required_raw:
+            if c not in self.data_raw.columns:
+                raise KeyError(f"data_raw is missing required column '{c}'")
 
-        # include these if present in normalized data
-        for col in [
-            "storage_af",
-            "inflow_cfs",
-            "evap_af",        # <-- added
-            # optionally support evap_cfs if someone later changes preprocessing
-            "evap_cfs",
-            "sj_farmington_q_cfs",
-            "sj_bluff_q_cfs",
-            "doy",
-        ]:
-            if col in self.data_norm.columns and col not in obs_cols:
-                obs_cols.append(col)
+        # We REQUIRE normalized columns for observations (inflow/evap):
+        required_norm = ["inflow_cfs", "evap_af"]
+        for c in required_norm:
+            if c not in self.data_norm.columns:
+                raise KeyError(
+                    f"data_norm is missing required column '{c}'. "
+                    f"To include evaporation in observation, ensure preprocessing outputs 'evap_af' in data_norm."
+                )
 
-        # If both evap_af and evap_cfs exist, prefer evap_af (drop evap_cfs)
-        if "evap_af" in obs_cols and "evap_cfs" in obs_cols:
-            obs_cols.remove("evap_cfs")
-
-        self.obs_cols = obs_cols
+        # Fixed schema across train/eval
+        self.obs_cols = ["storage_af", "evap_af", "inflow_cfs", "doy"]
         self.obs_dim = len(self.obs_cols)
 
         self.observation_space = Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(self.obs_dim,),
-            dtype=np.float32,
+            low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
         )
 
-        # Load elevation–area–capacity models built within build_interpolating_models.py
+        # Load elevation model
         with open(m.path("elev_area_storage_pickle"), "rb") as f:
             elev_models = pickle.load(f)
         self.capacity_to_elev = elev_models["capacity_to_elevation"]
 
-        # --- SPR Opportunity Index: load params from metadata and precompute ---
+        # --- SPR Opportunity Index precompute ---
         pm = project_metadata()
         params_path = pm.path("params.spr_oi_params_json")
-
-        # Load tuned boundary + OI mapping parameters
         self.spring_oi_params: OIParams = OIParams.load(params_path)
 
-        # Compute per-water-year OI/GO using current model data
         _df_wy = precompute_oi_by_wy(self.data_raw, self.spring_oi_params)
         self._spring_oi_by_wy = _df_wy["oi"]
         self._spring_go_by_wy = _df_wy["go"]
 
-        # Build daily-aligned series so step() lookup is trivial
         _wy_by_day = pd.Series(
             (self.data_raw.index.year + (self.data_raw.index.month >= 10)).astype(int),
             index=self.data_raw.index,
@@ -137,13 +124,9 @@ class NavajoReservoirEnv(Env):
         _oi_map = self._spring_oi_by_wy.to_dict()
         _go_map = self._spring_go_by_wy.to_dict()
 
-        # OI is float in [0, 1]; missing water-years become NaN.
         self.spring_oi_daily = _wy_by_day.map(_oi_map).astype(float)
-
-        # GO is boolean; fill missing water-years with False to avoid pd.NA → bool() errors.
         _go_daily = _wy_by_day.map(_go_map).astype("boolean").fillna(False)
         self.spring_go_daily = _go_daily.astype(bool)
-
 
         # Internal state
         self.t = 0
@@ -151,16 +134,13 @@ class NavajoReservoirEnv(Env):
         self.storage_af: float | None = None
         self.episode_step_count = 0
 
-        # Optional bookkeeping
         self.last_reward_breakdown: dict[str, float] | None = None
 
-        # Episode-level reward tracking (for diagnostics)
+        # Episode bookkeeping
         self._episode_reward_sums: dict[str, float] = defaultdict(float)
         self._episode_total_reward: float = 0.0
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
+    # ---------------- Helpers ----------------
 
     def _current_global_idx(self) -> int:
         return self.start_idx + self.t
@@ -168,53 +148,41 @@ class NavajoReservoirEnv(Env):
     def _current_date(self) -> pd.Timestamp:
         return self.dates[self._current_global_idx()]
 
-    def _build_obs(self) -> np.ndarray:
-        """
-        Build observation vector at CURRENT index.
-
-        - storage_af: derived from simulated storage_af (normalized)
-        - other forcings: read from data_norm for that day
-        - doy: date.dayofyear / 366
-        """
-        idx = self._current_global_idx()
-        date = self.dates[idx]
-
-        # Storage normalized from simulated storage_af
+    def _norm_storage(self, storage_af: float) -> float:
         storage_mean = float(self.norm_stats.loc["storage_af", "mean"])
         storage_std = float(self.norm_stats.loc["storage_af", "std"])
-        # guard against weird std
         if storage_std == 0.0:
             storage_std = 1.0
-        storage_norm = (float(self.storage_af) - storage_mean) / storage_std
+        return (float(storage_af) - storage_mean) / storage_std
 
+    def _build_obs(self) -> np.ndarray:
+        idx = self._current_global_idx()
+        date = self.dates[idx]
         row_norm = self.data_norm.iloc[idx]
 
-        vals: list[float] = []
-        for col in self.obs_cols:
-            if col == "storage_af":
-                vals.append(float(storage_norm))
-            elif col == "doy":
-                vals.append(float(date.dayofyear) / 366.0)
-            else:
-                vals.append(float(row_norm[col]))
+        storage_norm = self._norm_storage(float(self.storage_af))
 
-        return np.asarray(vals, dtype=np.float32)
+        # Fixed order: storage, evap, inflow, doy
+        obs = np.array(
+            [
+                storage_norm,
+                float(row_norm["evap_af"]),
+                float(row_norm["inflow_cfs"]),
+                float(date.dayofyear) / 366.0,
+            ],
+            dtype=np.float32,
+        )
+        return obs
 
-    # ------------------------------------------------------------------ #
-    # Gym API
-    # ------------------------------------------------------------------ #
+    # ---------------- Gym API ----------------
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
-        # Decide where this episode starts
-        # NOTE: if episode_length is full series, random windows don't matter much,
-        # but we keep the logic consistent.
         if self.is_eval:
             self.start_idx = 0
             self.max_steps = self.n_steps
         else:
-            # Training: random window if episode_length < n_steps
             max_start = max(self.n_steps - self.episode_length, 0)
             self.start_idx = int(self.np_random.integers(0, max_start + 1))
             self.max_steps = self.episode_length
@@ -222,14 +190,12 @@ class NavajoReservoirEnv(Env):
         self.t = 0
         self.episode_step_count = 0
 
-        # Initialize storage at the chosen start index
+        # init storage at episode start
         self.storage_af = float(self.data_raw.iloc[self.start_idx]["storage_af"])
 
-        # Reset per-episode caches
         self.last_reward_breakdown = None
         self.sj_at_farmington_history.clear()
 
-        # IMPORTANT: reset episode reward accumulators
         self._episode_reward_sums = defaultdict(float)
         self._episode_total_reward = 0.0
 
@@ -237,130 +203,145 @@ class NavajoReservoirEnv(Env):
         return obs, {}
 
     def step(self, action):
-        # --- robust action shaping ---
+        # ---- action shaping ----
         action = np.asarray(action, dtype=np.float32).squeeze()
         if action.ndim != 1 or action.shape[0] != 2:
             raise ValueError(f"Expected action shape (2,), got {action.shape}")
         action = np.clip(action, -1.0, 1.0)
 
-        # Current observation BEFORE applying action
         obs = self._build_obs()
         global_idx = self._current_global_idx()
         date = self.dates[global_idx]
 
-        # Map actions to releases [cfs]
-        frac_sanjuan = (action[0] + 1.0) / 2.0
-        frac_niip = (action[1] + 1.0) / 2.0
+        # Map actions to nonnegative component releases, then enforce TOTAL cap
+        frac_0 = (action[0] + 1.0) / 2.0
+        frac_1 = (action[1] + 1.0) / 2.0
 
-        sanjuan_release_cfs = self.min_release_cfs + frac_sanjuan * (
-            self.max_release_cfs - self.min_release_cfs
+        # Map each component to [0, max_total]
+        rel0_cfs = self.min_release_cfs + frac_0 * (
+            self.max_total_release_cfs - self.min_release_cfs
         )
-        niip_release_cfs = self.min_release_cfs + frac_niip * (
-            self.max_release_cfs - self.min_release_cfs
+        rel1_cfs = self.min_release_cfs + frac_1 * (
+            self.max_total_release_cfs - self.min_release_cfs
         )
+        requested_total_cfs = rel0_cfs + rel1_cfs
 
-        requested_total_release_cfs = sanjuan_release_cfs + niip_release_cfs
+        # --- Enforce operational total cap (Colab-style) ---
+        cap_penalty = 0.0
+        if requested_total_cfs > self.max_total_release_cfs:
+            pre_cap_total = float(requested_total_cfs)
+            scale = self.max_total_release_cfs / (requested_total_cfs + 1e-9)
+            rel0_cfs *= scale
+            rel1_cfs *= scale
+            total_cfs = rel0_cfs + rel1_cfs
+            cap_penalty = (pre_cap_total - float(total_cfs)) / (
+                self.max_total_release_cfs + 1e-9
+            )
+        else:
+            total_cfs = float(requested_total_cfs)
 
-        # --- MASS BALANCE PIECES ---
+        # --- Physical feasibility (water available) ---
         row_raw = self.data_raw.iloc[global_idx]
         inflow_cfs = float(row_raw["inflow_cfs"])
         inflow_af = inflow_cfs * CFS_TO_AF_PER_DAY
         evap_af = float(row_raw["evap_af"])
 
-        # Physically available volume this day
         available_af = max(float(self.storage_af) + inflow_af - evap_af, 0.0)
-        max_total_release_cfs_phys = available_af / CFS_TO_AF_PER_DAY
+        max_total_cfs_phys = available_af / CFS_TO_AF_PER_DAY
 
-        # --- PROJECT REQUESTED RELEASE INTO FEASIBLE SET ---
-        scale_penalty = 0.0
-        if requested_total_release_cfs > max_total_release_cfs_phys:
-            scale = (
-                max_total_release_cfs_phys / requested_total_release_cfs
-                if requested_total_release_cfs > 0.0
-                else 0.0
+        phys_penalty = 0.0
+        if total_cfs > max_total_cfs_phys:
+            pre_phys_total = float(total_cfs)
+            scale = max_total_cfs_phys / (total_cfs + 1e-9)
+            rel0_cfs *= scale
+            rel1_cfs *= scale
+            total_cfs = float(rel0_cfs + rel1_cfs)
+
+            # penalty = fraction of "requested but infeasible" relative to max_total_release_cfs
+            phys_penalty = (pre_phys_total - float(total_cfs)) / (
+                self.max_total_release_cfs + 1e-9
             )
-            sanjuan_release_cfs *= scale
-            niip_release_cfs *= scale
-            total_release_cfs = sanjuan_release_cfs + niip_release_cfs
 
-            # Optional: how “bad” was the request?
-            scale_penalty = (requested_total_release_cfs - total_release_cfs) / (
-                2.0 * self.max_release_cfs + 1e-6
-            )
-        else:
-            total_release_cfs = requested_total_release_cfs
-
-        # --- Mass balance update in AF ---
-        total_release_af = total_release_cfs * CFS_TO_AF_PER_DAY
-        new_storage_af = float(self.storage_af) + inflow_af - evap_af - total_release_af
+        # --- Mass balance update ---
+        total_af = total_cfs * CFS_TO_AF_PER_DAY
+        new_storage_af = float(self.storage_af) + inflow_af - evap_af - total_af
         new_storage_af = max(new_storage_af, 0.0)
 
-        # Farmington proxy and lag-2
-        animas_cfs = float(row_raw["animas_farmington_q_cfs"])
-        sj_at_farm_cfs = animas_cfs + sanjuan_release_cfs
+        # Optional Farmington proxy
+        animas_cfs = (
+            float(row_raw["animas_farmington_q_cfs"])
+            if "animas_farmington_q_cfs" in row_raw.index
+            else 0.0
+        )
+
+        # IMPORTANT: use mainstem component for Farmington proxy (avoid double-counting diversions)
+        sj_at_farm_cfs = animas_cfs + float(rel0_cfs)
 
         self.sj_at_farmington_history.append(sj_at_farm_cfs)
-        if len(self.sj_at_farmington_history) >= 3:
-            sj_at_farm_lag2_cfs = self.sj_at_farmington_history[-3]
-        else:
-            sj_at_farm_lag2_cfs = None
+        sj_at_farm_lag2_cfs = (
+            self.sj_at_farmington_history[-3]
+            if len(self.sj_at_farmington_history) >= 3
+            else None
+        )
 
-        # Elevation based on new storage using capacity_to_elevation model
+        # Elevation + hydropower
         new_elev_ft = float(self.capacity_to_elev(new_storage_af))
-
-        # Hydropower generation [MWh/day] from mainstem release + elevation
         hydropower_mwh = navajo_power_generation_model(
-            cfs_values=float(sanjuan_release_cfs),
+            cfs_values=float(rel1_cfs),  # component #2 drives power (Colab-style)
             elevation_ft=float(new_elev_ft),
         )
+
+        # SPR
         wy = int(date.year + (date.month >= 10))
         oi_val = float(self.spring_oi_daily.get(date, np.nan))
         go_val = bool(self.spring_go_daily.get(date, False))
 
-        # Build info dict for rewards/logging
         info = {
             "date": date,
-            "storage_af": new_storage_af,
+            "storage_af": float(new_storage_af),
             "prev_storage_af": float(self.storage_af),
-            "inflow_cfs": inflow_cfs,
-            "inflow_af": inflow_af,
-            "evap_af": evap_af,
-            "sanjuan_release_cfs": float(sanjuan_release_cfs),
-            "niip_release_cfs": float(niip_release_cfs),
-            "total_release_cfs": float(total_release_cfs),
-            "total_release_af": float(total_release_af),
+            "inflow_cfs": float(inflow_cfs),
+            "inflow_af": float(inflow_af),
+            "evap_af": float(evap_af),
+            # Repo-compatible naming (even if semantics differ)
+            "sanjuan_release_cfs": float(rel0_cfs),  # component #1
+            "niip_release_cfs": float(rel1_cfs),     # component #2
+            "total_release_cfs": float(total_cfs),
+            "total_release_af": float(total_af),
             "elev_ft": float(new_elev_ft),
             "sj_at_farmington_cfs": float(sj_at_farm_cfs),
-            "sj_at_farmington_lag2_cfs": None if sj_at_farm_lag2_cfs is None else float(sj_at_farm_lag2_cfs),
+            "sj_at_farmington_lag2_cfs": None
+            if sj_at_farm_lag2_cfs is None
+            else float(sj_at_farm_lag2_cfs),
             "min_storage_af": float(self.min_storage_af),
             "max_storage_af": float(self.max_storage_af),
             "raw_forcings": row_raw,
             "hydropower_mwh": float(hydropower_mwh),
-            "release_scale_penalty": float(scale_penalty),
-            "spring_wy": wy,       # SPR
-            "spring_oi": oi_val,   # SPR opportunity index: ∈ [0,1] or NaN if out of range
-            "spring_go": go_val,   # SPR opportunity index - binary: bool
+            # Penalties (optional for rewards)
+            "release_cap_penalty": float(cap_penalty),
+            "release_phys_penalty": float(phys_penalty),
+            # SPR
+            "spring_wy": wy,
+            "spring_oi": oi_val,
+            "spring_go": go_val,
         }
 
-        # Advance internal state
-        self.storage_af = new_storage_af
+        # Advance
+        self.storage_af = float(new_storage_af)
         self.t += 1
         self.episode_step_count += 1
 
-        # Done logic: stop if we hit end-of-series or episode length
         global_idx_next = self._current_global_idx()
-        done = (global_idx_next >= self.n_steps) or (self.episode_step_count >= self.episode_length)
+        done = (global_idx_next >= self.n_steps) or (
+            self.episode_step_count >= self.episode_length
+        )
 
         terminated = bool(done)
         truncated = False
 
-        # Next observation (SB3 doesn’t care if obs is dummy at done)
-        if not done:
-            next_obs = self._build_obs()
-        else:
-            next_obs = np.zeros_like(obs, dtype=np.float32)
+        next_obs = self._build_obs() if not done else np.zeros_like(obs, dtype=np.float32)
 
-        # Reward via composite reward function
+        # Reward
         ctx = RewardContext(
             t=global_idx,
             date=date,
@@ -372,17 +353,14 @@ class NavajoReservoirEnv(Env):
         total_reward, breakdown = self.reward_fn(ctx)
         self.last_reward_breakdown = breakdown
 
-        # --- Episode-level reward bookkeeping ---
+        # Episode bookkeeping
         self._episode_total_reward += float(total_reward)
-        for key, val in breakdown.items():
-            self._episode_reward_sums[key] += float(val)
+        for k, v in breakdown.items():
+            self._episode_reward_sums[k] += float(v)
 
-        # Expose everything via info for logging/diagnostics
         info["reward_components_step"] = breakdown
         info["reward_components_episode"] = dict(self._episode_reward_sums)
         info["episode_total_reward"] = float(self._episode_total_reward)
-
-        # Backwards-compatible alias
-        info["reward_components"] = breakdown
+        info["reward_components"] = breakdown  # backward compat
 
         return next_obs, float(total_reward), terminated, truncated, info

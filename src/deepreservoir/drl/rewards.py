@@ -8,27 +8,22 @@ import numpy as np
 import pandas as pd
 
 from deepreservoir.define_env.niip.niip_demand import niip_daily_demand
+from deepreservoir.define_env.spring_peak_release_curve import SpringPeakReleaseCurve
 
 
 # ---------------------------------------------------------------------
 # Types & context
 # ---------------------------------------------------------------------
 
-# You can adjust this later as your env API solidifies.
 @dataclass
 class RewardContext:
     """
     Information needed to compute reward for a single step.
-
-    Feel free to extend this with whatever you want:
-    - raw storage/release/inflows
-    - normalized obs/next_obs
-    - date, water year, etc.
     """
-    t: int                       # step index
+    t: int                       # step index (global idx)
     date: pd.Timestamp           # current date
     obs: np.ndarray              # current observation (normalized)
-    action: np.ndarray           # current action
+    action: np.ndarray           # current action (raw [-1,1])
     next_obs: np.ndarray         # next observation (normalized)
     info: Dict[str, Any]         # extra per-step info (raw series, flags, etc.)
 
@@ -50,18 +45,12 @@ OBJECTIVES = [
     "physics",
 ]
 
-# OBJECTIVE -> { variant_name -> reward_fn }
 REWARD_REGISTRY: Dict[str, Dict[str, RewardFn]] = {obj: {} for obj in OBJECTIVES}
 
 
 def register_reward(objective: str, variant: str) -> Callable[[RewardFn], RewardFn]:
     """
     Decorator to register a reward function under an objective + variant name.
-
-    Example:
-        @register_reward("hydropower", "baseline")
-        def hydropower_baseline(ctx: RewardContext) -> float:
-            ...
     """
     if objective not in REWARD_REGISTRY:
         raise KeyError(f"Unknown objective {objective!r}. Expected one of {OBJECTIVES}.")
@@ -84,41 +73,14 @@ class RewardComponent:
 
     @property
     def key(self) -> str:
-        # unique identifier, useful for logging
         return f"{self.objective}.{self.variant}"
 
-@dataclass
-class RewardDetail:
-    total: float
-    components: Dict[str, float]   # e.g. {"niip": -0.3, "esa_min_flow": 1.0}
-
-
-class MultiObjectiveReward:
-    def __init__(
-        self,
-        rewards: Mapping[str, RewardFn],
-        weights: Mapping[str, float] | None = None,
-    ):
-        # names are human labels like "niip", "esa_min_flow"
-        self.rewards = dict(rewards)
-        self.weights = weights or {name: 1.0 for name in rewards}
-
-    def __call__(self, ctx: "RewardContext") -> RewardDetail:
-        components: dict[str, float] = {}
-        total = 0.0
-
-        for name, fn in self.rewards.items():
-            val = float(fn(ctx))
-            components[name] = val
-            total += self.weights.get(name, 1.0) * val
-
-        return RewardDetail(total=total, components=components)
 
 class CompositeReward:
     """
     Combines multiple RewardComponents into a single scalar reward.
 
-    Call with a RewardContext; returns (total_reward, component_breakdown_dict).
+    Call with RewardContext; returns (total_reward, component_breakdown_dict).
     """
 
     def __init__(self, components: List[RewardComponent]):
@@ -129,40 +91,21 @@ class CompositeReward:
         breakdown: Dict[str, float] = {}
 
         for comp in self.components:
-            r = comp.fn(ctx)
+            r = float(comp.fn(ctx))
             weighted = comp.weight * r
-            breakdown[comp.key] = weighted
+            breakdown[comp.key] = float(weighted)
             total += weighted
 
-        return total, breakdown
+        return float(total), breakdown
 
-# ---------------------------------------------------------------------
-# Building a composite from a user spec
-# ---------------------------------------------------------------------
 
 def build_composite_reward(
     spec: Dict[str, str],
     weights: Optional[Dict[str, float]] = None,
 ) -> CompositeReward:
     """
-    Parameters
-    ----------
-    spec
-        Mapping objective -> variant, e.g.
-        {
-            "dam_safety": "band_penalty",
-            "esa_min_flow": "shortage",
-            "hydropower": "baseline",
-            "niip": "deficit",
-        }
-
-    weights
-        Optional mapping objective -> scalar weight. If None, all weights = 1.0.
-
-    Returns
-    -------
-    CompositeReward
-        Callable that takes RewardContext and returns (total_reward, breakdown_dict)
+    spec: mapping objective -> variant
+    weights: optional mapping objective -> scalar weight
     """
     components: List[RewardComponent] = []
     weights = weights or {}
@@ -188,12 +131,8 @@ def build_composite_reward(
 
 def parse_objective_spec(spec_str: str) -> Dict[str, str]:
     """
-    Parse a CLI-style string into a {objective -> variant} mapping.
-
     Format:
-        "dam_safety:band,esa_min_flow:shortage,hydropower:baseline,niip:deficit"
-
-    No weights here (can add a separate `--weights` arg later if wanted).
+      "dam_safety:storage_band,esa_min_flow:baseline,hydropower:baseline,niip"
     """
     spec: Dict[str, str] = {}
     if not spec_str:
@@ -207,166 +146,307 @@ def parse_objective_spec(spec_str: str) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------------------
-# Stub reward functions (fill these in as you go)
+# Reward functions
 # ---------------------------------------------------------------------
-
-# Each objective gets at least one variant ("baseline" here).
-# Add more variants later (e.g., "soft", "quadratic", "log", etc.)
-
 
 @register_reward("dam_safety", "baseline")
 def dam_safety_baseline(ctx: RewardContext) -> float:
     """
-    Reward = 1 if elevation < 6100 ft, else 0.
+    +1 if elevation < 6100 ft, else 0.
     """
-    elev_ft = ctx.info["elev_ft"] 
+    elev_ft = float(ctx.info["elev_ft"])
     return 1.0 if elev_ft < 6100.0 else 0.0
 
 
 @register_reward("dam_safety", "storage_band")
 def dam_safety_storage_band(ctx: RewardContext) -> float:
-    storage = ctx.info["storage_af"]
-    s_min   = 500_000
-    s_max   = 1_731_750
-    target  = 0.5 * (s_min + s_max)
+    """
+    Original reward shaping around a target storage band.
+    Returns in [-10, 10] (scaled) so it "matters".
+    """
+    storage = float(ctx.info["storage_af"])
+    s_min = 500_000.0
+    s_max = 1_731_750.0
+    target = 0.5 * (s_min + s_max)
 
-    # Define a symmetric scale so "far" from target is -1, near target is +1
-    span = (s_max - s_min) / 2  # half-width of band
+    span = (s_max - s_min) / 2.0
+    if span <= 0:
+        return 0.0
 
-    # Relative deviation from target; 0 at target, ±1 at the band edges
     x = (storage - target) / span
-
-    # Parabolic shape: 1 at target, 0 at band edges, negative outside
     r = 1.0 - x**2
-
-    # Clip to [-1, 1] so super-extreme values don't blow up
     r = float(np.clip(r, -1.0, 1.0))
-
-    # Make it matter
-    r = 10.0 * r
-    return r
-
-
-@register_reward("niip", "baseline")
-def niip_baseline(ctx: RewardContext) -> float:
-    """
-    NIIP baseline reward: penalize irrigation shortage.
-
-    Logic:
-      - Only active during DOY 50–300 (NIIP demand season).
-      - Let D = daily NIIP demand [cfs], R = NIIP diversion release [cfs].
-      - If R >= D  → reward = 1.0
-      - Else       → reward = R / D  (in [0, 1))
-      - Outside doy 50–300 → reward = 0.0
-    """
-    # Use the context date to get day-of-year
-    doy = ctx.date.timetuple().tm_yday
-
-    # Outside demand period: no NIIP reward/penalty
-    if not (50 <= doy <= 300):
-        return 0.0
-
-    # Demand in cfs from spline
-    demand_cfs = float(niip_daily_demand(doy))
-    if demand_cfs <= 0.0:
-        # No demand today → nothing to reward
-        return 0.0
-
-    # NIIP release in cfs (from env.step info)
-    niip_release_cfs = float(ctx.info["niip_release_cfs"])
-
-    if niip_release_cfs >= demand_cfs:
-        return 1.0
-    else:
-        # Fraction of demand that was actually met
-        return max(0.0, niip_release_cfs / demand_cfs)
+    return 1.0 * r
 
 
 @register_reward("esa_min_flow", "baseline")
 def esa_min_flow_baseline(ctx: RewardContext) -> float:
     """
-    ESA minimum flow reward.
-
     +1 if (Animas at Farmington + San Juan release) >= 500 cfs, else 0.
+    Uses sanjuan_release_cfs as component #1 (regular/mainstem release).
     """
-    row = ctx.info["raw_forcings"]  # pd.Series from data_raw
-    animas_cfs = float(row["animas_farmington_q_cfs"])
-
+    row = ctx.info["raw_forcings"]  # pd.Series
+    animas_cfs = float(row["animas_farmington_q_cfs"]) if "animas_farmington_q_cfs" in row.index else 0.0
     sanjuan_release_cfs = float(ctx.info["sanjuan_release_cfs"])
-
-    total_flow_cfs = animas_cfs + sanjuan_release_cfs # SJ @ Farmington is approximated by this summation that's based on Agent's actions
-
+    total_flow_cfs = animas_cfs + sanjuan_release_cfs
     return 1.0 if total_flow_cfs >= 500.0 else 0.0
 
 
 @register_reward("flooding", "baseline")
 def flooding_baseline(ctx: RewardContext) -> float:
     """
-    Flooding baseline reward with two components:
-
-      1. Same-day San Juan @ Farmington flow:
-         Q0 = sj_at_farmington_cfs = Animas + San Juan release
-         -> +1 if Q0 < 5,000 cfs, else 0.
-
-      2. Two-day-lagged flow:
-         Qlag2 = sj_at_farmington_lag2_cfs (if available)
-         -> +1 if Qlag2 < 12,000 cfs, else 0.
-         (If lag-2 is not yet available early in the episode, we treat it as safe.)
-
-    Total reward = average of the two components (0, 0.5, or 1.0).
+    Two-part flood safety:
+      +1 if same-day Farmington proxy < 5000 cfs
+      +1 if lag-2 proxy < 12000 cfs (or safe if not available early)
+    Return average in {0, 0.5, 1}.
     """
-    q0 = float(ctx.info["sj_at_farmington_cfs"])
+    q0 = float(ctx.info.get("sj_at_farmington_cfs", 0.0))
     qlag2 = ctx.info.get("sj_at_farmington_lag2_cfs", None)
 
-    # Component 1: same-day threshold
     c1 = 1.0 if q0 < 5000.0 else 0.0
 
-    # Component 2: lag-2 threshold; if we don't have lag-2 yet, treat as safe
     if qlag2 is None:
         c2 = 1.0
     else:
         c2 = 1.0 if float(qlag2) < 12000.0 else 0.0
 
-    # Average so the objective stays in [0, 1]
     return 0.5 * (c1 + c2)
 
 
 @register_reward("hydropower", "baseline")
 def hydropower_baseline(ctx: RewardContext) -> float:
     """
-    Hydropower reward based on daily generation.
+    Hydropower reward based on daily generation [MWh/day].
 
-    Uses:
-        ctx.info["hydropower_mwh"]  : hydropower generation [MWh/day]
-
-    Logic (mirrors old code):
-        - If generation < min_mwh     → -0.5  (not enough generation)
-        - Else                       → linear bonus from 0 to 1 over [min_mwh, max_mwh]
+    Mirrors original reward shaping:
+      - if < min_mwh -> -0.5
+      - else -> linear 0..1 between [min_mwh, max_mwh]
     """
     hydropower_mwh = float(ctx.info["hydropower_mwh"])
-
     min_mwh = 288.0
     max_mwh = 768.0
 
     if hydropower_mwh < min_mwh:
-        return -0.5  # not enough generation
-    else:
-        return (hydropower_mwh - min_mwh) / (max_mwh - min_mwh)
-
-@register_reward("physics", "scale_penalty")
-def physics_scale_penalty(ctx: RewardContext) -> float:
-    # Punish asking for more water than exists
-    penalty = float(ctx.info.get("release_scale_penalty", 0.0))
-    return -5 * penalty  # tune weight as you like
+        return -0.5
+    return float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
 
 
-@register_reward("esa_spring_peak_release", "baseline")
-def esa_spring_peak_baseline(ctx: RewardContext) -> float:
+# ---------------- NIIP ----------------
+
+def _niip_total_season_demand_cfs_sum(doy_start: int = 50, doy_end: int = 300) -> float:
     """
-    Simple scaffolding reward that reads the precomputed OI from env info.
-    Maps OI∈[0,1] to [-1,1] so it can combine with other components.
+    Precompute a season "total demand" scalar for normalization.
+    Since timestep is daily, sum(cfs) is proportional to volume over the season,
+    so it works as a stable normalizer.
+    """
+    doys = np.arange(doy_start, doy_end + 1)
+    vals = niip_daily_demand(doys)  
+    vals = np.asarray(vals, dtype=float)
+    vals = np.clip(vals, 0.0, None)
+    total = float(np.sum(vals))
+    return total
+
+
+# cache the scalar so it’s deterministic and cheap
+_NIIP_TOTAL_CFS_SUM = _niip_total_season_demand_cfs_sum(50, 300)
+
+
+@register_reward("niip", "baseline")
+def niip_colab_like(ctx: RewardContext) -> float:
+    """
+    NIIP reward conceptually like teh original code.
+
+    Active DOY 50–300.
+
+    Let:
+      D = demand_cfs(doy)
+      R = regular release component (we use ctx.info["sanjuan_release_cfs"])
+      delta = D - R
+      reward = 1 - |delta| / TOTAL_SEASON_DEMAND
+
+    Notes:
+      - This allows BOTH surplus and shortage to be penalized (same as your Colab).
+      - Outside season -> 0.
+    """
+    doy = int(pd.to_datetime(ctx.date).timetuple().tm_yday)
+    if not (50 <= doy <= 300):
+        return 0.0
+
+    demand_cfs = float(niip_daily_demand(doy))
+    if demand_cfs <= 0.0 or _NIIP_TOTAL_CFS_SUM <= 0.0:
+        return 0.0
+
+    
+    regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
+
+    delta = demand_cfs - regular_release_cfs
+    r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
+
+    
+    return float(np.clip(r, -1.0, 1.0))
+
+
+# ---------------- Physics penalties ----------------
+
+@register_reward("physics", "baseline")
+def physics_penalty(ctx: RewardContext) -> float:
+    """
+    Penalize asking for infeasible releases.
+
+    Matches your final environs.py keys:
+      - release_cap_penalty : how much the request exceeded operational cap
+      - release_phys_penalty: how much it exceeded physical available water
+    """
+    cap = float(ctx.info.get("release_cap_penalty", 0.0))
+    phys = float(ctx.info.get("release_phys_penalty", 0.0))
+    return -5.0 * (cap + phys)
+
+
+# ---------------- SPR rewards ----------------
+
+_SPRING_PEAK_CURVE = SpringPeakReleaseCurve()
+
+
+@register_reward("esa_spring_peak_release", "oi")
+def esa_spring_peak_oi(ctx: RewardContext) -> float:
+    """
+    The FIRST SPR reward (OI-based)
+
+    Reads OI from env info:
+      ctx.info["spring_oi"] in [0,1] (or NaN)
+
+    Map OI to [-1,1]:
+      r = 2*OI - 1
     """
     oi = ctx.info.get("spring_oi", np.nan)
     if oi is None or not np.isfinite(oi):
         return 0.0
-    return float(2.0 * oi - 1.0)
+    return float(2.0 * float(oi) - 1.0)
+
+
+@register_reward("esa_spring_peak_release", "curve")
+def esa_spring_peak_curve(ctx: RewardContext) -> float:
+    """
+    SPR curve-matching reward.
+
+    Compares the *regular/mainstem release* (sanjuan_release_cfs)
+    against the target curve (from SpringPeakReleaseCurve).
+
+    Inside window -> reward in [-1,1]
+    Outside window -> 0
+    """
+    date = pd.to_datetime(ctx.date)
+    target = float(_SPRING_PEAK_CURVE.target_cfs_from_date(date))
+
+    if target <= 0.0:
+        return 0.0
+
+    actual = float(ctx.info["sanjuan_release_cfs"])
+
+    tolerance_cfs = 500.0  # tune (250, 500, 1000)
+    err = abs(actual - target)
+
+    r = 1.0 - (err / (tolerance_cfs + 1e-9))
+    return float(np.clip(r, -1.0, 1.0))
+
+# @register_reward("esa_spring_peak_release", "farmington_10k")
+# def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
+#     """
+#     SPR bonus: during SPR season only, reward if (Animas + San Juan release) at Farmington >= 10,000 cfs.
+
+#     Uses:
+#       - ctx.info["sj_at_farmington_cfs"]  (already computed in env)
+#       - SpringPeakReleaseCurve to determine whether we are inside the SPR window
+
+#     Returns:
+#       - 0.0 outside SPR window
+#       - +1.0 if threshold met during SPR window, else 0.0
+#     """
+#     date = pd.to_datetime(ctx.date)
+
+#     # Use the SPR curve as the "season gate" (active only when curve is active)
+#     target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
+#     if target <= 0.0:
+#         return 0.0  # outside SPR window
+
+#     q_farm = float(ctx.info.get("sj_at_farmington_cfs", 0.0))
+
+#     return 1.0 if q_farm >= 10_000.0 else 0.0
+
+@register_reward("esa_spring_peak_release", "farmington_10k")
+def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
+    """
+    SPR window reward: encourage (Animas + San Juan release) >= 10,000 cfs at Farmington,
+    and favor "simultaneous-ish" peaking (both contribute meaningfully).
+
+    Uses:
+      - ctx.date
+      - ctx.info["raw_forcings"]["animas_farmington_q_cfs"]
+      - ctx.info["sanjuan_release_cfs"]
+
+    Returns:
+      - 0 outside SPR window
+      - [0, 1] inside window
+    """
+    date = pd.to_datetime(ctx.date)
+
+    # Use the SPR curve to define the "SPR window"
+    target = _SPRING_PEAK_CURVE.target_cfs_from_date(date)
+    if target <= 0.0:
+        return 0.0
+
+    row = ctx.info.get("raw_forcings", None)
+    if row is None or "animas_farmington_q_cfs" not in row.index:
+        return 0.0
+
+    animas = float(row["animas_farmington_q_cfs"])
+    sanjuan = float(ctx.info.get("sanjuan_release_cfs", 0.0))
+
+    total = animas + sanjuan
+
+    # Gate: only reward if we reach the threshold
+    threshold = 10_000.0
+    if total < threshold:
+        return 0.0
+
+    # How far above threshold? (soft ramp up to 1.0)
+    # e.g., +0 at 10k, +1 at 12k
+    ramp = 2_000.0
+    magnitude = (total - threshold) / ramp
+    magnitude = float(np.clip(magnitude, 0.0, 1.0))
+
+    # "Simultaneous peak" encouragement:
+    # balance ~ 1 if animas ≈ sanjuan, ~0 if one dominates the sum.
+    balance = 1.0 - (abs(animas - sanjuan) / (total + 1e-6))
+    balance = float(np.clip(balance, 0.0, 1.0))
+
+    return 30 * magnitude * balance
+
+@register_reward("esa_spring_peak_release", "farmington_10k_shaped")
+def spr_farmington_10k_shaped(ctx: RewardContext) -> float:
+    """
+    Reward Farmington discharge approaching/exceeding 10k during SPR window.
+    Farmington approx = Animas(gauge) + San Juan release (agent)
+    Uses spring_oi as the SPR window mask (OI>0 means in window).
+    """
+    oi = float(ctx.info.get("spring_oi", np.nan))
+    if not np.isfinite(oi) or oi <= 0.0:
+        return 0.0  # outside SPR window
+
+    animas = float(ctx.info["raw_forcings"].get("animas_farmington_q_cfs", 0.0))
+    sanjuan = float(ctx.info.get("sanjuan_release_cfs", 0.0))
+    farm = animas + sanjuan
+
+    thr = 10_000.0
+
+    # Shaping: value in [0,1] as you approach 10k
+    # Example: 0 at 6k, ~1 at 10k (tune low_ref)
+    low_ref = 6_000.0
+    shaped = (farm - low_ref) / (thr - low_ref + 1e-6)
+    shaped = float(np.clip(shaped, 0.0, 1.0))
+
+    # Bonus if you actually exceed threshold
+    bonus = 1.0 if farm >= thr else 0.0
+
+    # Combine; keep magnitude modest (weights will do the heavy lifting)
+    return 0.7 * shaped + 0.3 * bonus
