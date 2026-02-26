@@ -176,7 +176,7 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     x = (storage - target) / span
     r = 1.0 - x**2
     r = float(np.clip(r, -1.0, 1.0))
-    return 1.0 * r
+    return 2.0 * r
 
 
 @register_reward("esa_min_flow", "baseline")
@@ -420,7 +420,7 @@ def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
     balance = 1.0 - (abs(animas - sanjuan) / (total + 1e-6))
     balance = float(np.clip(balance, 0.0, 1.0))
 
-    return 30 * magnitude * balance
+    return 100 * magnitude * balance
 
 @register_reward("esa_spring_peak_release", "farmington_10k_shaped")
 def spr_farmington_10k_shaped(ctx: RewardContext) -> float:
