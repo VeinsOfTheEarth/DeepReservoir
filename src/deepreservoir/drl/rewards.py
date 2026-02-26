@@ -251,7 +251,7 @@ def _niip_total_season_demand_cfs_sum(doy_start: int = 50, doy_end: int = 300) -
 _NIIP_TOTAL_CFS_SUM = _niip_total_season_demand_cfs_sum(50, 300)
 
 
-@register_reward("niip", "baseline")
+@register_reward("niip", "colab_like")
 def niip_colab_like(ctx: RewardContext) -> float:
     """
     NIIP reward conceptually like teh original code.
@@ -277,13 +277,14 @@ def niip_colab_like(ctx: RewardContext) -> float:
         return 0.0
 
     
+    # regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
     regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
 
     delta = demand_cfs - regular_release_cfs
     r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
 
-    
-    return float(np.clip(r, -1.0, 1.0))
+    # return float(np.clip(r, -1.0, 1.0))
+    return float(r)
 
 
 # ---------------- Physics penalties ----------------
