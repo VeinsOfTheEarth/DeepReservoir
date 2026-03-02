@@ -64,16 +64,12 @@ METRIC_DEFINITIONS: dict[str, str] = {
 
     # --- ESA minimum flow ---
     "esa_min_flow_pct_days_met": (
-        "Fraction of days ESA minimum flow is met. Preferred computation: (animas_farmington_q_cfs + "
-        "sanjuan_release_cfs) >= threshold (default 500 cfs). Fallback: uses rc_esa_min_flow.baseline when physical "
-        "columns are unavailable."
+        "Fraction of days ESA minimum flow is met: (animas_farmington_q_cfs + release_sj_main_cfs) >= threshold (default 500 cfs)."
     ),
 
     # --- Flooding ---
     "flooding_pct_days_met": (
-        "Fraction of days flooding constraints are satisfied. Preferred computation mirrors flooding_baseline: "
-        "sj_at_farmington_cfs < 5000 AND (sj_at_farmington_lag2_cfs is NaN OR < 12000). Fallback: uses "
-        "rc_flooding.baseline when physical columns are unavailable."
+        "Fraction of days flooding constraints are satisfied: sj_at_farmington_cfs < 5000 AND (sj_at_farmington_lag2_cfs is NaN OR < 12000)."
     ),
 
     # --- Hydropower ---
@@ -480,9 +476,9 @@ def _metric_esa_min_flow_pct_days_met(
     *,
     threshold_cfs: float = 500.0,
     animas_col: str = "animas_farmington_q_cfs",
-    release_col: str = "sanjuan_release_cfs",
+    release_col: str = "release_sj_main_cfs",
 ) -> dict[str, float]:
-    """ESA minimum flow: % of days (Animas @ Farmington + San Juan release) >= threshold."""
+    """ESA minimum flow: % of days (Animas @ Farmington + San Juan mainstem release) >= threshold."""
     out: dict[str, float] = {}
 
     # If the experiment did not include esa_min_flow, report NA.
@@ -490,22 +486,14 @@ def _metric_esa_min_flow_pct_days_met(
         out["esa_min_flow_pct_days_met"] = float("nan")
         return out
 
-    # Prefer the physical columns; fall back to reward component if needed.
-    if (animas_col in df.columns) and (release_col in df.columns):
-        animas = df[animas_col].astype(float)
-        release = df[release_col].astype(float)
-        met = (animas.fillna(0.0) + release.fillna(0.0)) >= float(threshold_cfs)
-        out["esa_min_flow_pct_days_met"] = float(met.mean())
+    if (animas_col not in df.columns) or (release_col not in df.columns):
+        out["esa_min_flow_pct_days_met"] = float("nan")
         return out
 
-    # Fallback: if reward component exists and is binary, mean corresponds to % met.
-    for rc_col in ("rc_esa_min_flow.baseline", "rc_esa_min_flow"):
-        if rc_col in df.columns:
-            s = df[rc_col].astype(float)
-            out["esa_min_flow_pct_days_met"] = float((s > 0.5).mean())
-            return out
-
-    out["esa_min_flow_pct_days_met"] = float("nan")
+    animas = df[animas_col].astype(float)
+    release = df[release_col].astype(float)
+    met = (animas.fillna(0.0) + release.fillna(0.0)) >= float(threshold_cfs)
+    out["esa_min_flow_pct_days_met"] = float(met.mean())
     return out
 
 
@@ -531,24 +519,18 @@ def _metric_flooding_pct_days_met(
         return out
 
     if q0_col not in df.columns:
-        # Fallback to reward component if available
-        for rc_col in ("rc_flooding.baseline", "rc_flooding"):
-            if rc_col in df.columns:
-                s = df[rc_col].astype(float)
-                out["flooding_pct_days_met"] = float((s >= 0.999).mean())
-                return out
         out["flooding_pct_days_met"] = float("nan")
         return out
 
     q0 = df[q0_col].astype(float)
     if qlag2_col in df.columns:
-        q2 = df[qlag2_col].astype(float)
-        lag2_safe = q2.isna() | (q2 < float(lag2_thresh_cfs))
+        qlag2 = df[qlag2_col].astype(float)
+        safe_lag2 = qlag2.isna() | (qlag2 < float(lag2_thresh_cfs))
     else:
-        lag2_safe = pd.Series(True, index=df.index)
+        safe_lag2 = pd.Series(True, index=df.index)
 
-    met = (q0 < float(same_day_thresh_cfs)) & lag2_safe
-    out["flooding_pct_days_met"] = float(met.mean())
+    safe_same = q0 < float(same_day_thresh_cfs)
+    out["flooding_pct_days_met"] = float((safe_same & safe_lag2).mean())
     return out
 
 
@@ -586,16 +568,13 @@ def _metric_hydropower_pct_of_historic(
 def _niip_get_delivery_series(
     df: pd.DataFrame,
     *,
-    delivery_col: str = "niip_release_cfs",
-    fallback_cols: tuple[str, ...] = ("release_comp2_cfs",),
+    delivery_col: str = "release_niip_cfs",
 ) -> pd.Series | None:
     """Return the NIIP delivery series in CFS, or None if not available."""
     if delivery_col in df.columns:
         return df[delivery_col].astype(float)
-    for c in fallback_cols:
-        if c in df.columns:
-            return df[c].astype(float)
     return None
+
 
 
 def _niip_get_demand_series(
@@ -644,7 +623,7 @@ def _metric_niip_delivery_and_volume(
     doy_start: int = 50,
     doy_end: int = 300,
     demand_col: str = "niip_demand_cfs",
-    delivery_col: str = "niip_release_cfs",
+    delivery_col: str = "release_niip_cfs",
     demand_positive_eps: float = 1e-9,
     tol_cfs: float = 0.0,
 ) -> dict[str, float]:

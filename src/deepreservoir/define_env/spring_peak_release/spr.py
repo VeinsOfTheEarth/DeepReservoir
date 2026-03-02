@@ -1,7 +1,6 @@
-import pandas as pd
-
-
 # Use Four Corners for SPR measurements
+
+import pandas as pd
 
 # This dictionary is derived from Table 8.1 in the 1999 SJRIP Flow Recommendations docuement. The values
 # quantify the recommended spring peak release thresholds, durations, and frequencies.
@@ -13,7 +12,6 @@ spr_targets = {'threshold_cfs' : [10000, 8000, 5000, 2500],
 # Create daily SWE for Animas and UpperSJ
 path_hourly_swes = r'X:\Research\DeepReservoir\data\swe'
 df = pd.read_parquet(r"X:\Research\DeepReservoir\data\swe\Animas.parquet")
-
 
 from deepreservoir.data.loader import NavajoData
 nd = NavajoData()

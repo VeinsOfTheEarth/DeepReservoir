@@ -21,14 +21,27 @@ CFS_TO_AF_PER_DAY = 1.98211
 
 
 class NavajoReservoirEnv(Env):
-    """
-    Navajo Reservoir environment (daily timestep).
+    """Navajo Reservoir environment (daily timestep).
 
-    Multi-action PPO (single agent, 2 continuous actions):
-      action[0] -> release component #1 (mapped to cfs)
-      action[1] -> release component #2 (mapped to cfs)
+    One agent, two continuous actions (Box[-1, 1], shape=(2,)):
+      - action[0] -> release_sj_main_cfs
+      - action[1] -> release_niip_cfs
 
-    Total release is the sum of both components and is used in mass balance.
+    Important physical constraints implemented here:
+      - Per-outlet capacity caps:
+          release_sj_main_cfs <= max_release_sj_main_cfs (default 5000)
+          release_niip_cfs    <= max_release_niip_cfs    (default 2500)
+        If the agent requests more than the cap, we hard-cap (no proportional rescaling).
+
+      - Deadpool constraint (elevation-based):
+          If starting reservoir elevation is at/below deadpool_elev_ft (derived from
+          deadpool_storage_af via the E–S curve; deadpool_storage_af defaults to 500,000 AF),
+          *no releases are physically possible*, so both outlet releases are forced to 0.
+
+      - Water-available constraint:
+          Even above deadpool, releases cannot exceed the water available that day.
+          If total requested release exceeds available water, both outlets are scaled down
+          proportionally to satisfy mass balance (this preserves the requested split).
 
     Observation (fixed order, Colab-aligned):
       [ storage_norm, evap_norm, inflow_norm, doy ]
@@ -44,7 +57,9 @@ class NavajoReservoirEnv(Env):
         reward_fn,
         episode_length: int | None = None,
         min_release_cfs: float = 0.0,
-        max_total_release_cfs: float = 5000.0,  # total cap like Colab
+        max_release_sj_main_cfs: float = 5000.0,
+        max_release_niip_cfs: float = 2500.0,
+        deadpool_storage_af: float = 500_000.0,
         is_eval: bool = False,
     ):
         super().__init__()
@@ -64,12 +79,15 @@ class NavajoReservoirEnv(Env):
             int(episode_length) if episode_length is not None else self.n_steps
         )
 
-        # Release limits (TOTAL) in cfs, matching Colab intent
+        # Release limits (per-outlet) in cfs
         self.min_release_cfs = float(min_release_cfs)
-        self.max_total_release_cfs = float(max_total_release_cfs)
+        self.max_release_sj_main_cfs = float(max_release_sj_main_cfs)
+        self.max_release_niip_cfs = float(max_release_niip_cfs)
 
-        # Storage safety band (raw AF)
-        self.min_storage_af = 500_000.0
+        # Storage thresholds (raw AF)
+        # - deadpool_storage_af is *physical* (no releases possible below it)
+        # - max_storage_af is informational (spill not modeled here)
+        self.deadpool_storage_af = float(deadpool_storage_af)
         self.max_storage_af = 1_731_750.0
 
         # ACTION SPACE: 2 releases in [-1, 1]
@@ -105,7 +123,15 @@ class NavajoReservoirEnv(Env):
         # Load elevation model
         with open(m.path("elev_area_storage_pickle"), "rb") as f:
             elev_models = pickle.load(f)
+        # Elevation-area-storage interpolators (2019 table).
+        # We only *require* capacity→elevation, but we also keep elevation→capacity when available.
         self.capacity_to_elev = elev_models["capacity_to_elevation"]
+        self.elev_to_capacity = elev_models.get("elevation_to_capacity", None)
+
+        # Derive a deadpool elevation threshold from the configured deadpool storage.
+        # The repo does not currently include an authoritative deadpool *elevation* constant;
+        # using the E–S curve keeps the physical rule expressed in the right units.
+        self.deadpool_elev_ft = float(self.capacity_to_elev(self.deadpool_storage_af))
 
         # --- SPR Opportunity Index precompute ---
         pm = project_metadata()
@@ -192,6 +218,10 @@ class NavajoReservoirEnv(Env):
 
         # init storage at episode start
         self.storage_af = float(self.data_raw.iloc[self.start_idx]["storage_af"])
+        # Enforce physical spill level at reset as well (historical series should not exceed this,
+        # but small inconsistencies/rounding can otherwise start an episode above the spill level).
+        self.storage_af = float(min(self.storage_af, self.max_storage_af))
+
 
         self.last_reward_breakdown = None
         self.sj_at_farmington_history.clear()
@@ -213,32 +243,44 @@ class NavajoReservoirEnv(Env):
         global_idx = self._current_global_idx()
         date = self.dates[global_idx]
 
-        # Map actions to nonnegative component releases, then enforce TOTAL cap
-        frac_0 = (action[0] + 1.0) / 2.0
-        frac_1 = (action[1] + 1.0) / 2.0
+        # Map actions to nonnegative per-outlet releases (cfs)
+        frac_sj = (action[0] + 1.0) / 2.0
+        frac_niip = (action[1] + 1.0) / 2.0
 
-        # Map each component to [0, max_total]
-        rel0_cfs = self.min_release_cfs + frac_0 * (
-            self.max_total_release_cfs - self.min_release_cfs
+        requested_release_sj_main_cfs = self.min_release_cfs + frac_sj * (
+            self.max_release_sj_main_cfs - self.min_release_cfs
         )
-        rel1_cfs = self.min_release_cfs + frac_1 * (
-            self.max_total_release_cfs - self.min_release_cfs
+        requested_release_niip_cfs = self.min_release_cfs + frac_niip * (
+            self.max_release_niip_cfs - self.min_release_cfs
         )
-        requested_total_cfs = rel0_cfs + rel1_cfs
 
-        # --- Enforce operational total cap (Colab-style) ---
-        cap_penalty = 0.0
-        if requested_total_cfs > self.max_total_release_cfs:
-            pre_cap_total = float(requested_total_cfs)
-            scale = self.max_total_release_cfs / (requested_total_cfs + 1e-9)
-            rel0_cfs *= scale
-            rel1_cfs *= scale
-            total_cfs = rel0_cfs + rel1_cfs
-            cap_penalty = (pre_cap_total - float(total_cfs)) / (
-                self.max_total_release_cfs + 1e-9
-            )
+        # --- Deadpool constraint: no releases below deadpool ---
+        # We implement this in *elevation* space (outlet intake constraint), using the
+        # starting elevation of the step. This is conservative: if inflow during the day
+        # would raise the reservoir above deadpool, releases become possible on the next step.
+        start_elev_ft = float(self.capacity_to_elev(float(self.storage_af)))
+        deadpool_block = start_elev_ft <= float(self.deadpool_elev_ft)
+
+        if deadpool_block:
+            release_sj_main_cfs = 0.0
+            release_niip_cfs = 0.0
+            cap_penalty = 0.0
         else:
-            total_cfs = float(requested_total_cfs)
+            # --- Per-outlet hard caps ---
+            release_sj_main_cfs = float(
+                min(requested_release_sj_main_cfs, self.max_release_sj_main_cfs)
+            )
+            release_niip_cfs = float(min(requested_release_niip_cfs, self.max_release_niip_cfs))
+
+            # Aggregate cap-penalty = fraction of requested flow clipped by outlet caps
+            clipped = (requested_release_sj_main_cfs - release_sj_main_cfs) + (
+                requested_release_niip_cfs - release_niip_cfs
+            )
+            cap_penalty = float(max(clipped, 0.0)) / (
+                (self.max_release_sj_main_cfs + self.max_release_niip_cfs) + 1e-9
+            )
+
+        total_cfs = float(release_sj_main_cfs + release_niip_cfs)
 
         # --- Physical feasibility (water available) ---
         row_raw = self.data_raw.iloc[global_idx]
@@ -253,19 +295,34 @@ class NavajoReservoirEnv(Env):
         if total_cfs > max_total_cfs_phys:
             pre_phys_total = float(total_cfs)
             scale = max_total_cfs_phys / (total_cfs + 1e-9)
-            rel0_cfs *= scale
-            rel1_cfs *= scale
-            total_cfs = float(rel0_cfs + rel1_cfs)
+            release_sj_main_cfs *= scale
+            release_niip_cfs *= scale
+            total_cfs = float(release_sj_main_cfs + release_niip_cfs)
 
-            # penalty = fraction of "requested but infeasible" relative to max_total_release_cfs
             phys_penalty = (pre_phys_total - float(total_cfs)) / (
-                self.max_total_release_cfs + 1e-9
+                (self.max_release_sj_main_cfs + self.max_release_niip_cfs) + 1e-9
             )
 
         # --- Mass balance update ---
-        total_af = total_cfs * CFS_TO_AF_PER_DAY
-        new_storage_af = float(self.storage_af) + inflow_af - evap_af - total_af
+        # --- Mass balance update (controlled releases) ---
+        controlled_total_cfs = float(total_cfs)
+        controlled_total_af = controlled_total_cfs * CFS_TO_AF_PER_DAY
+        new_storage_af = float(self.storage_af) + inflow_af - evap_af - controlled_total_af
         new_storage_af = max(new_storage_af, 0.0)
+
+        # --- Automatic spill (physical): any water above the spill level is released ---
+        # We model this as an uncontrolled spill that goes to the San Juan mainstem (not NIIP).
+        spill_af = 0.0
+        spill_cfs = 0.0
+        if new_storage_af > float(self.max_storage_af):
+            spill_af = float(new_storage_af - float(self.max_storage_af))
+            spill_cfs = float(spill_af / CFS_TO_AF_PER_DAY)
+            new_storage_af = float(self.max_storage_af)
+
+        # Totals including spill (actual outflow at the dam)
+        sj_main_flow_cfs = float(release_sj_main_cfs + spill_cfs)
+        total_cfs = float(sj_main_flow_cfs + release_niip_cfs)
+        total_af = float(controlled_total_af + spill_af)
 
         # Optional Farmington proxy
         animas_cfs = (
@@ -274,8 +331,8 @@ class NavajoReservoirEnv(Env):
             else 0.0
         )
 
-        # IMPORTANT: use mainstem component for Farmington proxy (avoid double-counting diversions)
-        sj_at_farm_cfs = animas_cfs + float(rel0_cfs)
+        # IMPORTANT: mainstem outlet contributes to Farmington; NIIP does not.
+        sj_at_farm_cfs = animas_cfs + float(sj_main_flow_cfs)
 
         self.sj_at_farmington_history.append(sj_at_farm_cfs)
         sj_at_farm_lag2_cfs = (
@@ -287,7 +344,7 @@ class NavajoReservoirEnv(Env):
         # Elevation + hydropower
         new_elev_ft = float(self.capacity_to_elev(new_storage_af))
         hydropower_mwh = navajo_power_generation_model(
-            cfs_values=float(rel1_cfs),  # component #2 drives power (Colab-style)
+            cfs_values=float(release_sj_main_cfs),
             elevation_ft=float(new_elev_ft),
         )
 
@@ -300,24 +357,37 @@ class NavajoReservoirEnv(Env):
             "date": date,
             "storage_af": float(new_storage_af),
             "prev_storage_af": float(self.storage_af),
+            "prev_elev_ft": float(start_elev_ft),
             "inflow_cfs": float(inflow_cfs),
             "inflow_af": float(inflow_af),
             "evap_af": float(evap_af),
-            # Repo-compatible naming (even if semantics differ)
-            "sanjuan_release_cfs": float(rel0_cfs),  # component #1
-            "niip_release_cfs": float(rel1_cfs),     # component #2
+            # Releases (unambiguous names + units)
+            "release_sj_main_cfs": float(release_sj_main_cfs),
+            "release_niip_cfs": float(release_niip_cfs),
             "total_release_cfs": float(total_cfs),
             "total_release_af": float(total_af),
+            "spill_cfs": float(spill_cfs),
+            "spill_af": float(spill_af),
+            "sj_main_flow_cfs": float(sj_main_flow_cfs),
+            "total_controlled_release_cfs": float(controlled_total_cfs),
+            "total_controlled_release_af": float(controlled_total_af),
+            # Helpful debugging context
+            "requested_release_sj_main_cfs": float(requested_release_sj_main_cfs),
+            "requested_release_niip_cfs": float(requested_release_niip_cfs),
+            "max_release_sj_main_cfs": float(self.max_release_sj_main_cfs),
+            "max_release_niip_cfs": float(self.max_release_niip_cfs),
+            "deadpool_storage_af": float(self.deadpool_storage_af),
+            "deadpool_elev_ft": float(self.deadpool_elev_ft),
+            "deadpool_block": bool(deadpool_block),
             "elev_ft": float(new_elev_ft),
             "sj_at_farmington_cfs": float(sj_at_farm_cfs),
             "sj_at_farmington_lag2_cfs": None
             if sj_at_farm_lag2_cfs is None
             else float(sj_at_farm_lag2_cfs),
-            "min_storage_af": float(self.min_storage_af),
             "max_storage_af": float(self.max_storage_af),
             "raw_forcings": row_raw,
             "hydropower_mwh": float(hydropower_mwh),
-            # Penalties (optional for rewards)
+            # Penalties (optional for rewards/diagnostics)
             "release_cap_penalty": float(cap_penalty),
             "release_phys_penalty": float(phys_penalty),
             # SPR
@@ -361,6 +431,6 @@ class NavajoReservoirEnv(Env):
         info["reward_components_step"] = breakdown
         info["reward_components_episode"] = dict(self._episode_reward_sums)
         info["episode_total_reward"] = float(self._episode_total_reward)
-        info["reward_components"] = breakdown  # backward compat
+        info["reward_components"] = breakdown
 
         return next_obs, float(total_reward), terminated, truncated, info

@@ -261,17 +261,35 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     r = float(np.clip(r, -1.0, 1.0))
     return 1.0 * r
 
+@register_reward("dam_safety", "storage_band_shaped")
+def dam_safety_storage_band(ctx: RewardContext) -> float:
+    """
+    Original reward shaping around a target storage band.
+    """
+    storage = float(ctx.info["storage_af"])
+    s_min = 500_000.0
+    s_max = 1_731_750.0
+    target = 0.5 * (s_min + s_max)
+
+    span = (s_max - s_min) / 2.0
+    if span <= 0:
+        return 0.0
+
+    x = (storage - target) / span
+    r = 1.0 - x**2
+    return r
+
 
 @register_reward("esa_min_flow", "baseline")
 def esa_min_flow_baseline(ctx: RewardContext) -> float:
     """
-    +1 if (Animas at Farmington + San Juan release) >= 500 cfs, else 0.
-    Uses sanjuan_release_cfs as component #1 (regular/mainstem release).
+    +1 if (Animas at Farmington + San Juan mainstem release) >= 500 cfs, else 0.
+    Uses release_sj_main_cfs as component #1 (regular/mainstem release).
     """
     row = ctx.info["raw_forcings"]  # pd.Series
     animas_cfs = float(row["animas_farmington_q_cfs"]) if "animas_farmington_q_cfs" in row.index else 0.0
-    sanjuan_release_cfs = float(ctx.info["sanjuan_release_cfs"])
-    total_flow_cfs = animas_cfs + sanjuan_release_cfs
+    release_sj_main_cfs = float(ctx.info["release_sj_main_cfs"])
+    total_flow_cfs = animas_cfs + release_sj_main_cfs
     return 1.0 if total_flow_cfs >= 500.0 else 0.0
 
 
@@ -343,7 +361,7 @@ def niip_colab_like(ctx: RewardContext) -> float:
 
     Let:
       D = demand_cfs(doy)
-      R = regular release component (we use ctx.info["sanjuan_release_cfs"])
+      R = regular release component (we use ctx.info["release_sj_main_cfs"])
       delta = D - R
       reward = 1 - |delta| / TOTAL_SEASON_DEMAND
 
@@ -360,7 +378,7 @@ def niip_colab_like(ctx: RewardContext) -> float:
         return 0.0
 
     
-    regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
+    regular_release_cfs = float(ctx.info["release_sj_main_cfs"])
 
     delta = demand_cfs - regular_release_cfs
     r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
@@ -413,7 +431,7 @@ def esa_spring_peak_curve(ctx: RewardContext) -> float:
     """
     SPR curve-matching reward.
 
-    Compares the *regular/mainstem release* (sanjuan_release_cfs)
+    Compares the *regular/mainstem release* (release_sj_main_cfs)
     against the target curve (from SpringPeakReleaseCurve).
 
     Inside window -> reward in [-1,1]
@@ -425,7 +443,7 @@ def esa_spring_peak_curve(ctx: RewardContext) -> float:
     if target <= 0.0:
         return 0.0
 
-    actual = float(ctx.info["sanjuan_release_cfs"])
+    actual = float(ctx.info["release_sj_main_cfs"])
 
     tolerance_cfs = 500.0  # tune (250, 500, 1000)
     err = abs(actual - target)
@@ -436,7 +454,7 @@ def esa_spring_peak_curve(ctx: RewardContext) -> float:
 # @register_reward("esa_spring_peak_release", "farmington_10k")
 # def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
 #     """
-#     SPR bonus: during SPR season only, reward if (Animas + San Juan release) at Farmington >= 10,000 cfs.
+#     SPR bonus: during SPR season only, reward if (Animas + San Juan mainstem release) at Farmington >= 10,000 cfs.
 
 #     Uses:
 #       - ctx.info["sj_at_farmington_cfs"]  (already computed in env)
@@ -460,13 +478,13 @@ def esa_spring_peak_curve(ctx: RewardContext) -> float:
 @register_reward("esa_spring_peak_release", "farmington_10k")
 def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
     """
-    SPR window reward: encourage (Animas + San Juan release) >= 10,000 cfs at Farmington,
+    SPR window reward: encourage (Animas + San Juan mainstem release) >= 10,000 cfs at Farmington,
     and favor "simultaneous-ish" peaking (both contribute meaningfully).
 
     Uses:
       - ctx.date
       - ctx.info["raw_forcings"]["animas_farmington_q_cfs"]
-      - ctx.info["sanjuan_release_cfs"]
+      - ctx.info["release_sj_main_cfs"]
 
     Returns:
       - 0 outside SPR window
@@ -484,7 +502,7 @@ def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
         return 0.0
 
     animas = float(row["animas_farmington_q_cfs"])
-    sanjuan = float(ctx.info.get("sanjuan_release_cfs", 0.0))
+    sanjuan = float(ctx.info.get("release_sj_main_cfs", 0.0))
 
     total = animas + sanjuan
 
@@ -510,7 +528,7 @@ def esa_spring_peak_farmington_10k(ctx: RewardContext) -> float:
 def spr_farmington_10k_shaped(ctx: RewardContext) -> float:
     """
     Reward Farmington discharge approaching/exceeding 10k during SPR window.
-    Farmington approx = Animas(gauge) + San Juan release (agent)
+    Farmington approx = Animas(gauge) + San Juan mainstem release (agent)
     Uses spring_oi as the SPR window mask (OI>0 means in window).
     """
     oi = float(ctx.info.get("spring_oi", np.nan))
@@ -518,7 +536,7 @@ def spr_farmington_10k_shaped(ctx: RewardContext) -> float:
         return 0.0  # outside SPR window
 
     animas = float(ctx.info["raw_forcings"].get("animas_farmington_q_cfs", 0.0))
-    sanjuan = float(ctx.info.get("sanjuan_release_cfs", 0.0))
+    sanjuan = float(ctx.info.get("release_sj_main_cfs", 0.0))
     farm = animas + sanjuan
 
     thr = 10_000.0

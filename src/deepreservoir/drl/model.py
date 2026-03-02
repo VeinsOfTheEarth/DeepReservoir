@@ -21,7 +21,6 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import gymnasium as gym
 
 from stable_baselines3 import PPO
@@ -32,6 +31,7 @@ from stable_baselines3.common.monitor import Monitor
 from deepreservoir.data import loader
 from deepreservoir.drl import helpers
 from deepreservoir.drl import rewards as drl_rewards
+from deepreservoir.drl import plotting as drl_plotting
 from deepreservoir.drl import metrics as drl_metrics
 from deepreservoir.drl.environs import NavajoReservoirEnv
 from deepreservoir.define_env.hydropower_model import navajo_power_generation_model
@@ -182,11 +182,9 @@ def run_test_rollout(
       - storage_agent_af vs storage_hist_af
       - total_release_agent_cfs vs release_cfs (historic)
       - component releases from env info:
-          sanjuan_release_cfs (component #1)
-          niip_release_cfs    (component #2)
+          release_sj_main_cfs (San Juan mainstem)
+          release_niip_cfs (NIIP delivery)
       - hydropower (agent + historic when possible)
-      - raw model outputs (action_0/action_1) and requested releases
-      - post-constraint penalties and end-of-step state (storage/elevation)
     """
     run_dir = Path(run_dir)
 
@@ -225,27 +223,6 @@ def run_test_rollout(
 
         # Step
         action, _ = agent.predict(obs, deterministic=True)
-        action_arr = np.asarray(action, dtype=float).reshape(-1)
-        if action_arr.size >= 2:
-            a0, a1 = float(action_arr[0]), float(action_arr[1])
-        elif action_arr.size == 1:
-            a0, a1 = float(action_arr[0]), float(action_arr[0])
-        else:
-            a0, a1 = float("nan"), float("nan")
-
-        # Map raw actions to *requested* releases (pre-capping/physics), mirroring env.step()
-        frac_0 = (a0 + 1.0) / 2.0
-        frac_1 = (a1 + 1.0) / 2.0
-        requested_rel0_cfs = float(
-            eval_env.min_release_cfs
-            + frac_0 * (eval_env.max_total_release_cfs - eval_env.min_release_cfs)
-        )
-        requested_rel1_cfs = float(
-            eval_env.min_release_cfs
-            + frac_1 * (eval_env.max_total_release_cfs - eval_env.min_release_cfs)
-        )
-        requested_total_cfs = float(requested_rel0_cfs + requested_rel1_cfs)
-
         next_obs, reward, terminated, truncated, info_step = eval_env.step(action)
         done = bool(terminated or truncated)
 
@@ -255,11 +232,6 @@ def run_test_rollout(
             "reward": float(reward),
             "storage_agent_af": storage_agent_af,
             "elev_agent_ft": elev_agent_ft,
-            "action_0": a0,
-            "action_1": a1,
-            "requested_rel0_cfs": requested_rel0_cfs,
-            "requested_rel1_cfs": requested_rel1_cfs,
-            "requested_total_release_cfs": requested_total_cfs,
         }
 
         # Reward components
@@ -268,84 +240,43 @@ def run_test_rollout(
             rec[f"rc_{k}"] = float(v)
 
         # Component releases (use env’s native keys)
-        if "sanjuan_release_cfs" in info_step:
-            rec["sanjuan_release_cfs"] = float(info_step["sanjuan_release_cfs"])
-            rec["release_comp1_cfs"] = float(info_step["sanjuan_release_cfs"])
-        if "niip_release_cfs" in info_step:
-            rec["niip_release_cfs"] = float(info_step["niip_release_cfs"])
-            rec["release_comp2_cfs"] = float(info_step["niip_release_cfs"])
+        if "release_sj_main_cfs" in info_step:
+            rec["release_sj_main_cfs"] = float(info_step["release_sj_main_cfs"])
+        if "release_niip_cfs" in info_step:
+            rec["release_niip_cfs"] = float(info_step["release_niip_cfs"])
         if "total_release_cfs" in info_step:
             rec["release_agent_cfs"] = float(info_step["total_release_cfs"])
 
-        # Penalties & end-of-step state (from info)
-        if "release_cap_penalty" in info_step:
-            rec["release_cap_penalty"] = float(info_step["release_cap_penalty"])
-        if "release_phys_penalty" in info_step:
-            rec["release_phys_penalty"] = float(info_step["release_phys_penalty"])
-        if "storage_af" in info_step:
-            rec["storage_agent_af_end"] = float(info_step["storage_af"])
-        if "elev_ft" in info_step:
-            rec["elev_agent_ft_end"] = float(info_step["elev_ft"])
-        if "min_storage_af" in info_step:
-            rec["min_storage_af"] = float(info_step["min_storage_af"])
-        if "max_storage_af" in info_step:
-            rec["max_storage_af"] = float(info_step["max_storage_af"])
-
-        # SPR / downstream proxy info
-        for k in [
-            "spring_wy",
-            "spring_oi",
-            "spring_go",
-            "sj_at_farmington_cfs",
-            "sj_at_farmington_lag2_cfs",
-        ]:
-            if k in info_step:
-                v = info_step[k]
-                if isinstance(v, (bool, np.bool_)):
-                    rec[k] = int(bool(v))
-                elif v is None:
-                    pass
-                else:
-                    try:
-                        rec[k] = float(v)
-                    except Exception:
-                        pass
-
-        # Raw forcings row (prefer info to avoid index edge-cases)
-        date_row = info_step.get("raw_forcings", None)
-        if date_row is None:
-            date_row = eval_env.data_raw.loc[rec["date"]]
+        # Historic row
+        date_row = eval_env.data_raw.loc[rec["date"]]
 
         if "storage_af" in date_row.index:
             rec["storage_hist_af"] = float(date_row["storage_af"])
 
-        # Include all numeric raw columns (these are the full environment inputs).
-        for col in getattr(eval_env.data_raw, "columns", []):
-            if col in rec:
-                continue
-            if col not in date_row.index:
-                continue
-            val = date_row[col]
-            try:
-                if pd.isna(val):
-                    continue
-            except Exception:
-                pass
-            try:
-                rec[col] = float(val)
-            except Exception:
-                continue
+        for col in [
+            "release_cfs",
+            "inflow_cfs",
+            "evap_af",
+            "sj_farmington_q_cfs",
+            "animas_farmington_q_cfs",
+            "sj_bluff_q_cfs",
+        ]:
+            if col in date_row.index:
+                rec[col] = float(date_row[col])
 
-        # Hydropower: prefer env-computed value (uses post-step elevation)
-        if "hydropower_mwh" in info_step:
-            rec["hydro_agent_mwh"] = float(info_step["hydropower_mwh"])
-        elif "release_comp2_cfs" in rec:
-            elev_for_hp = float(rec.get("elev_agent_ft_end", elev_agent_ft))
+        # Convenience conversion for plotting: evap_af (acre-feet/day) -> evap_cfs
+        # 1 AF = 43,560 ft^3 ; 1 day = 86,400 s
+        if "evap_af" in rec and "evap_cfs" not in rec:
+            rec["evap_cfs"] = float(rec["evap_af"]) * (43560.0 / 86400.0)
+
+        # Hydropower: agent generation (MWh/day), using San Juan mainstem release + agent elevation
+        if "release_sj_main_cfs" in rec:
             hp_agent = navajo_power_generation_model(
-                cfs_values=float(rec["release_comp2_cfs"]),
-                elevation_ft=elev_for_hp,
+                cfs_values=float(rec["release_sj_main_cfs"]),
+                elevation_ft=elev_agent_ft,
             )
             rec["hydro_agent_mwh"] = float(hp_agent)
+
 
         # Historic hydropower: use historic total release + elevation from historic storage
         if "storage_hist_af" in rec and "release_cfs" in rec:
@@ -366,96 +297,6 @@ def run_test_rollout(
 
     df = pd.DataFrame.from_records(records).set_index("date").sort_index()
     return df
-
-
-def make_standard_plots(df: pd.DataFrame, outdir: Path | str) -> None:
-    """
-    Original-codeplots:
-      - total reward
-      - reward components
-      - storage actual vs predicted
-      - total release actual vs predicted
-      - component releases (comp1 vs comp2)
-      - hydropower (agent)
-    """
-    outdir = Path(outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    # Total reward
-    fig, ax = plt.subplots(figsize=(10, 4))
-    df["reward"].plot(ax=ax)
-    ax.set_title("Total reward over test period")
-    ax.set_ylabel("reward")
-    fig.tight_layout()
-    fig.savefig(outdir / "reward_total.png", dpi=150)
-    plt.close(fig)
-
-    # Reward components
-    rc_cols = [c for c in df.columns if c.startswith("rc_")]
-    if rc_cols:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        df[rc_cols].plot(ax=ax)
-        ax.set_title("Reward components over test period")
-        ax.set_ylabel("component value")
-        ax.legend(loc="best")
-        fig.tight_layout()
-        fig.savefig(outdir / "reward_components.png", dpi=150)
-        plt.close(fig)
-
-    # Storage actual vs predicted
-    if "storage_hist_af" in df.columns and "storage_agent_af" in df.columns:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        df["storage_hist_af"].plot(ax=ax, label="Actual storage (AF)")
-        df["storage_agent_af"].plot(ax=ax, label="Predicted storage (AF)")
-        ax.set_title("Predicted vs Actual Storage (AF)")
-        ax.set_ylabel("storage [AF]")
-        ax.legend(loc="best")
-        fig.tight_layout()
-        fig.savefig(outdir / "storage_pred_vs_actual.png", dpi=150)
-        plt.close(fig)
-
-    # Total release actual vs predicted
-    if "release_cfs" in df.columns and "release_agent_cfs" in df.columns:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        df["release_cfs"].plot(ax=ax, label="Actual total release (cfs)")
-        df["release_agent_cfs"].plot(ax=ax, label="Predicted total release (cfs)")
-        ax.set_title("Predicted vs Actual Total Release (cfs)")
-        ax.set_ylabel("cfs")
-        ax.legend(loc="best")
-        fig.tight_layout()
-        fig.savefig(outdir / "release_pred_vs_actual.png", dpi=150)
-        plt.close(fig)
-
-    # Component releases (comp1 vs comp2)
-    if "release_comp1_cfs" in df.columns and "release_comp2_cfs" in df.columns:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        df["release_comp1_cfs"].plot(ax=ax, label="Release component #1 (cfs)")
-        df["release_comp2_cfs"].plot(ax=ax, label="Release component #2 (cfs)")
-        ax.set_title("Component Releases (cfs)")
-        ax.set_ylabel("cfs")
-        ax.legend(loc="best")
-        fig.tight_layout()
-        fig.savefig(outdir / "release_comp1_vs_comp2.png", dpi=150)
-        plt.close(fig)
-
-    # Hydropower (agent)
-    if "hydro_agent_mwh" in df.columns:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        df["hydro_agent_mwh"].plot(ax=ax)
-        ax.set_title("Hydropower generation (agent) [MWh/day]")
-        ax.set_ylabel("MWh/day")
-        fig.tight_layout()
-        fig.savefig(outdir / "hydropower_agent.png", dpi=150)
-        plt.close(fig)
-
-
-def compute_test_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """Backward-compatible wrapper.
-
-    Prefer using deepreservoir.drl.metrics.compute_metrics directly.
-    """
-    return drl_metrics.compute_metrics(df, which="core")
-
 
 # ---------------------------------------------------------------------
 # DRLModel class: single training entry point
@@ -659,13 +500,31 @@ class DRLModel:
             df.to_csv(out_path.with_suffix(".csv"), index=True)
 
         if save_plots:
-            make_standard_plots(df, self.logdir / "eval_plots")
+            df_upd = getattr(self, "train_update_metrics_", None)
+            if df_upd is None:
+                df_upd = self.load_train_update_metrics()
 
-        metrics_df = drl_metrics.compute_metrics(df, which="core")
+            outdir = self.logdir / "eval_plots"
+            _ = drl_plotting.save_plots(
+                df_test=df,
+                outdir=outdir,
+                df_train_updates=df_upd,
+                which="all",
+            )
+
+        metrics_df = drl_metrics.compute_metrics(df, which="core", validate=True)
+
         if save_metrics:
-            drl_metrics.save_metrics(df_test=df, outdir=self.logdir, which="core", stem="eval_metrics")
+            drl_metrics.save_metrics(
+                df_test=df,
+                outdir=self.logdir,
+                which="core",
+                stem="eval_metrics",
+                validate=True,
+            )
 
         return df, metrics_df
+
 
 
 class TrainUpdateRewardComponentsCallback(BaseCallback):
