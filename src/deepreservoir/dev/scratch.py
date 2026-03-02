@@ -18,7 +18,7 @@ reward_spec = (
 # ~500k timesteps (matches your previous scratch convention)
 # Note: DRLModel uses total_timesteps = n_episodes * episode_length_train.
 episode_length_train = 3600
-n_episodes = 2  # 140 * 3600 = 504,000
+n_episodes = 280 # 140 * 3600 = 504,000
 
 m = DRLModel(
     n_years_test=8,

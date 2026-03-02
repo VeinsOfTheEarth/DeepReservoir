@@ -42,8 +42,8 @@ _CFS_DAY_TO_ACRE_FEET = 86400.0 / 43560.0  # 1 cfs sustained for 1 day -> acre-f
 # -----------------------------------------------------------------------------
 #
 # Notes
-# - All "fraction of days" metrics (e.g., *_pct_days_*) are fractions in [0, 1] (not 0–100).
-# - `hydropower_pct_of_historic` and `niip_annual_volume_pct_of_contract` are in percent (0–100).
+# - All "fraction of days" metrics (e.g., *_frac_days_*) are fractions in [0, 1] (not 0–100).
+# - `hydropower_frac_of_historic` and `niip_annual_volume_frac_of_contract` are fractions in [0, 1] (not 0–100).
 # - Objective-aligned metrics return NaN if that objective was not active in the
 #   experiment (detected by absence of `rc_<objective>.*` columns in df_test).
 # - Reward-component summaries are dynamic because reward specs vary by run.
@@ -54,22 +54,22 @@ METRIC_DEFINITIONS: dict[str, str] = {
     "mean_reward": "Mean per-timestep total reward over the test rollout (unitless).",
 
     # --- Dam safety (storage) ---
-    "dam_safety_pct_days_within_storage_bounds": (
+    "dam_safety_frac_days_within_storage_bounds": (
         "Fraction of days storage is within [min_storage_af, max_storage_af]. Uses storage_agent_af_end if "
         "available, else storage_agent_af. Bounds come from min_storage_af/max_storage_af if present; otherwise "
         "defaults to the dam_safety storage-band bounds used in training."
     ),
-    "dam_safety_pct_days_below_min_storage": "Fraction of days storage is below the minimum storage bound.",
-    "dam_safety_pct_days_above_max_storage": "Fraction of days storage is above the maximum storage bound.",
+    "dam_safety_frac_days_below_min_storage": "Fraction of days storage is below the minimum storage bound.",
+    "dam_safety_frac_days_above_max_storage": "Fraction of days storage is above the maximum storage bound.",
     "dam_safety_max_storage_range_water_year_af": "Maximum (max-min) storage range within any water year (AF). Water year starts Oct 1.",
 
     # --- ESA minimum flow ---
-    "esa_min_flow_pct_days_met": (
+    "esa_min_flow_frac_days_met": (
         "Fraction of days ESA minimum flow is met: (animas_farmington_q_cfs + release_sj_main_cfs) >= threshold (default 500 cfs)."
     ),
 
     # --- Flooding ---
-    "flooding_pct_days_met": (
+    "flooding_frac_days_met": (
         "Fraction of days flooding constraints are satisfied: sj_at_farmington_cfs < 5000 AND (sj_at_farmington_lag2_cfs is NaN OR < 12000)."
     ),
 
@@ -81,7 +81,7 @@ METRIC_DEFINITIONS: dict[str, str] = {
     "spr_curve_mean_error_cfs": (
         "Mean signed error (agent - target) for San Juan mainstem release vs the SPR target curve over SPR-window days (cfs). Positive means over-release."
     ),
-    "spr_curve_pct_days_within_500cfs": (
+    "spr_curve_frac_days_within_500cfs": (
         "Fraction of SPR-window days where |agent mainstem release - target curve| <= 500 cfs."
     ),
     "spr_freq_years_meeting_*": (
@@ -97,24 +97,24 @@ METRIC_DEFINITIONS: dict[str, str] = {
     "spr_mean_max_consec_days_*": (
         "Pattern: spr_mean_max_consec_days_<thr>cfs = mean across water years of the maximum consecutive-day run >= <thr> during SPR window."
     ),
-    "spr_mean_pct_window_days_above_*": (
-        "Pattern: spr_mean_pct_window_days_above_<thr>cfs = mean across water years of the fraction of SPR-window days with Farmington proxy >= <thr>."
+    "spr_mean_frac_window_days_above_*": (
+        "Pattern: spr_mean_frac_window_days_above_<thr>cfs = mean across water years of the fraction of SPR-window days with Farmington proxy >= <thr>."
     ),
 
     # --- Hydropower ---
-    "hydropower_pct_of_historic": (
-        "Total agent generation as a percent of historic generation over the test rollout: "
-        "100 * sum(hydro_agent_mwh) / sum(hydro_hist_mwh). Returns NaN if historic sum is 0 or columns missing."
+    "hydropower_frac_of_historic": (
+        "Total agent generation as a fraction of historic generation over the test rollout: "
+        "sum(hydro_agent_mwh) / sum(hydro_hist_mwh). Returns NaN if historic sum is 0 or columns missing."
     ),
 
     # --- NIIP ---
-    "niip_pct_days_demand_met_in_window": (
+    "niip_frac_days_demand_met_in_window": (
         "Fraction of days within the NIIP active window that the daily NIIP demand is met (delivery >= demand). "
         "By default, the window is DOY 50–300 (inclusive) with demand>0. Demand is computed from the NIIP demand "
         "curve (or from a niip_demand_cfs column if present)."
     ),
-    "niip_annual_volume_pct_of_contract": (
-        "Mean across calendar years of 100*(delivered seasonal volume / contractual seasonal volume), where volumes are "
+    "niip_annual_volume_frac_of_contract": (
+        "Mean across calendar years of (delivered seasonal volume / contractual seasonal volume), where volumes are "
         "computed by integrating daily CFS values over the NIIP window (cfs-day -> acre-feet). Contract volume is the "
         "integral under the NIIP demand curve for the days included in each year."
     ),
@@ -352,11 +352,11 @@ def _metric_action_saturation(df: pd.DataFrame, *, sat: float = 0.99) -> dict[st
         return out
     for c in a_cols:
         s = df[c].astype(float)
-        out[f"pct_{c}_saturated"] = float((np.abs(s) >= float(sat)).mean())
+        out[f"frac_{c}_saturated"] = float((np.abs(s) >= float(sat)).mean())
     if len(a_cols) == 2:
         s0 = df[a_cols[0]].astype(float)
         s1 = df[a_cols[1]].astype(float)
-        out["pct_any_action_saturated"] = float(((np.abs(s0) >= sat) | (np.abs(s1) >= sat)).mean())
+        out["frac_any_action_saturated"] = float(((np.abs(s0) >= sat) | (np.abs(s1) >= sat)).mean())
     return out
 
 
@@ -367,13 +367,13 @@ def _metric_release_constraint_binding(df: pd.DataFrame, *, eps: float = 1e-6) -
     if "requested_total_release_cfs" in df.columns and "release_agent_cfs" in df.columns:
         req = df["requested_total_release_cfs"].astype(float)
         act = df["release_agent_cfs"].astype(float)
-        out["pct_release_capped_or_limited"] = float((req > (act + eps)).mean())
+        out["frac_release_capped_or_limited"] = float((req > (act + eps)).mean())
 
     if "release_cap_penalty" in df.columns:
-        out["pct_release_cap_penalty_pos"] = float((df["release_cap_penalty"].astype(float) > 0.0).mean())
+        out["frac_release_cap_penalty_pos"] = float((df["release_cap_penalty"].astype(float) > 0.0).mean())
         out["mean_release_cap_penalty"] = float(df["release_cap_penalty"].astype(float).mean())
     if "release_phys_penalty" in df.columns:
-        out["pct_release_phys_penalty_pos"] = float((df["release_phys_penalty"].astype(float) > 0.0).mean())
+        out["frac_release_phys_penalty_pos"] = float((df["release_phys_penalty"].astype(float) > 0.0).mean())
         out["mean_release_phys_penalty"] = float(df["release_phys_penalty"].astype(float).mean())
 
     return out
@@ -394,7 +394,7 @@ def _objective_is_active(df: pd.DataFrame, objective: str) -> bool:
 # -----------------------------------------------------------------------------
 
 
-def _metric_dam_safety_pct_days_within_storage_bounds(
+def _metric_dam_safety_frac_days_within_storage_bounds(
     df: pd.DataFrame,
     *,
     low_af: float | None = None,
@@ -411,12 +411,12 @@ def _metric_dam_safety_pct_days_within_storage_bounds(
 
     # If the experiment did not include dam_safety, report NA.
     if not _objective_is_active(df, "dam_safety"):
-        out["dam_safety_pct_days_within_storage_bounds"] = float("nan")
+        out["dam_safety_frac_days_within_storage_bounds"] = float("nan")
         return out
 
     col = storage_col if storage_col in df.columns else "storage_agent_af"
     if col not in df.columns:
-        out["dam_safety_pct_days_within_storage_bounds"] = float("nan")
+        out["dam_safety_frac_days_within_storage_bounds"] = float("nan")
         return out
 
     s = df[col].astype(float)
@@ -442,7 +442,7 @@ def _metric_dam_safety_pct_days_within_storage_bounds(
     lo = float(low_af)
     hi = float(high_af)
     within = (s >= lo) & (s <= hi)
-    out["dam_safety_pct_days_within_storage_bounds"] = float(within.mean())
+    out["dam_safety_frac_days_within_storage_bounds"] = float(within.mean())
     return out
 
 
@@ -459,8 +459,8 @@ def _metric_dam_safety_storage_detail(
     # If the experiment did not include dam_safety, report NA.
     if not _objective_is_active(df, "dam_safety"):
         return {
-            "dam_safety_pct_days_below_min_storage": float("nan"),
-            "dam_safety_pct_days_above_max_storage": float("nan"),
+            "dam_safety_frac_days_below_min_storage": float("nan"),
+            "dam_safety_frac_days_above_max_storage": float("nan"),
             "dam_safety_max_storage_range_water_year_af": float("nan"),
         }
 
@@ -488,8 +488,8 @@ def _metric_dam_safety_storage_detail(
 
     lo = float(low_af)
     hi = float(high_af)
-    out["dam_safety_pct_days_below_min_storage"] = float((s < lo).mean())
-    out["dam_safety_pct_days_above_max_storage"] = float((s > hi).mean())
+    out["dam_safety_frac_days_below_min_storage"] = float((s < lo).mean())
+    out["dam_safety_frac_days_above_max_storage"] = float((s > hi).mean())
 
     # Max within-water-year storage range (AF)
     idx = df.index
@@ -500,7 +500,7 @@ def _metric_dam_safety_storage_detail(
     return out
 
 
-def _metric_esa_min_flow_pct_days_met(
+def _metric_esa_min_flow_frac_days_met(
     df: pd.DataFrame,
     *,
     threshold_cfs: float = 500.0,
@@ -512,21 +512,21 @@ def _metric_esa_min_flow_pct_days_met(
 
     # If the experiment did not include esa_min_flow, report NA.
     if not _objective_is_active(df, "esa_min_flow"):
-        out["esa_min_flow_pct_days_met"] = float("nan")
+        out["esa_min_flow_frac_days_met"] = float("nan")
         return out
 
     if (animas_col not in df.columns) or (release_col not in df.columns):
-        out["esa_min_flow_pct_days_met"] = float("nan")
+        out["esa_min_flow_frac_days_met"] = float("nan")
         return out
 
     animas = df[animas_col].astype(float)
     release = df[release_col].astype(float)
     met = (animas.fillna(0.0) + release.fillna(0.0)) >= float(threshold_cfs)
-    out["esa_min_flow_pct_days_met"] = float(met.mean())
+    out["esa_min_flow_frac_days_met"] = float(met.mean())
     return out
 
 
-def _metric_flooding_pct_days_met(
+def _metric_flooding_frac_days_met(
     df: pd.DataFrame,
     *,
     same_day_thresh_cfs: float = 5000.0,
@@ -544,11 +544,11 @@ def _metric_flooding_pct_days_met(
 
     # If the experiment did not include flooding, report NA.
     if not _objective_is_active(df, "flooding"):
-        out["flooding_pct_days_met"] = float("nan")
+        out["flooding_frac_days_met"] = float("nan")
         return out
 
     if q0_col not in df.columns:
-        out["flooding_pct_days_met"] = float("nan")
+        out["flooding_frac_days_met"] = float("nan")
         return out
 
     q0 = df[q0_col].astype(float)
@@ -559,38 +559,38 @@ def _metric_flooding_pct_days_met(
         safe_lag2 = pd.Series(True, index=df.index)
 
     safe_same = q0 < float(same_day_thresh_cfs)
-    out["flooding_pct_days_met"] = float((safe_same & safe_lag2).mean())
+    out["flooding_frac_days_met"] = float((safe_same & safe_lag2).mean())
     return out
 
 
-def _metric_hydropower_pct_of_historic(
+def _metric_hydropower_frac_of_historic(
     df: pd.DataFrame,
     *,
     agent_col: str = "hydro_agent_mwh",
     hist_col: str = "hydro_hist_mwh",
 ) -> dict[str, float]:
-    """Hydropower: total generation relative to historic (percent).
+    """Hydropower: total generation relative to historic (fraction).
 
-    Computed as 100 * sum(agent) / sum(historic) over the test period.
+    Computed as sum(agent) / sum(historic) over the test period.
     """
     out: dict[str, float] = {}
 
     # If the experiment did not include hydropower, report NA.
     if not _objective_is_active(df, "hydropower"):
-        out["hydropower_pct_of_historic"] = float("nan")
+        out["hydropower_frac_of_historic"] = float("nan")
         return out
     if agent_col not in df.columns or hist_col not in df.columns:
-        out["hydropower_pct_of_historic"] = float("nan")
+        out["hydropower_frac_of_historic"] = float("nan")
         return out
 
     a = df[agent_col].astype(float)
     h = df[hist_col].astype(float)
     denom = float(np.nansum(h.values))
     if denom == 0.0:
-        out["hydropower_pct_of_historic"] = float("nan")
+        out["hydropower_frac_of_historic"] = float("nan")
         return out
 
-    out["hydropower_pct_of_historic"] = float(100.0 * np.nansum(a.values) / denom)
+    out["hydropower_frac_of_historic"] = float(np.nansum(a.values) / denom)
     return out
 
 
@@ -659,15 +659,15 @@ def _metric_niip_delivery_and_volume(
     """NIIP metrics.
 
     Emits:
-      - niip_pct_days_demand_met_in_window : fraction of active-window days demand is met (delivery >= demand)
-      - niip_annual_volume_pct_of_contract : mean across calendar years of 100*(delivered volume / contractual volume)
+      - niip_frac_days_demand_met_in_window : fraction of active-window days demand is met (delivery >= demand)
+      - niip_annual_volume_frac_of_contract : mean across calendar years of 100*(delivered volume / contractual volume)
 
     The NIIP active window is defined as DOY in [doy_start, doy_end] (inclusive) and demand > 0.
     Demand is taken from `demand_col` if present; otherwise computed from the NIIP demand curve.
     """
     out = {
-        "niip_pct_days_demand_met_in_window": float("nan"),
-        "niip_annual_volume_pct_of_contract": float("nan"),
+        "niip_frac_days_demand_met_in_window": float("nan"),
+        "niip_annual_volume_frac_of_contract": float("nan"),
     }
 
     # If the experiment did not include niip, report NA.
@@ -688,7 +688,7 @@ def _metric_niip_delivery_and_volume(
 
     # 1) % of time within the active window that daily demand is met
     met = delivery.astype(float) >= (demand.astype(float) - float(tol_cfs))
-    out["niip_pct_days_demand_met_in_window"] = float(met[active].mean())
+    out["niip_frac_days_demand_met_in_window"] = float(met[active].mean())
 
     # 2) Annual volume (delivered / contract), averaged across calendar years
     years = df.index.year
@@ -705,7 +705,7 @@ def _metric_niip_delivery_and_volume(
         ratios.append(delivered_af / contract_af)
 
     if ratios:
-        out["niip_annual_volume_pct_of_contract"] = float(100.0 * float(np.mean(ratios)))
+        out["niip_annual_volume_frac_of_contract"] = float(float(np.mean(ratios)))
 
     return out
 
@@ -769,7 +769,7 @@ def _metric_spring_peak_release(
     if not bool(spr_mask.any()):
         out["spr_curve_mean_abs_error_cfs"] = float("nan")
         out["spr_curve_mean_error_cfs"] = float("nan")
-        out["spr_curve_pct_days_within_500cfs"] = float("nan")
+        out["spr_curve_frac_days_within_500cfs"] = float("nan")
         for thr, dur, tf in threshold_specs:
             thr_i = int(thr)
             dur_i = int(dur)
@@ -777,7 +777,7 @@ def _metric_spring_peak_release(
             out[f"spr_target_frequency_{thr_i}cfs_{dur_i}d"] = float(tf)
             out[f"spr_overachievement_{thr_i}cfs_{dur_i}d"] = float("nan")
             out[f"spr_mean_max_consec_days_{thr_i}cfs"] = float("nan")
-            out[f"spr_mean_pct_window_days_above_{thr_i}cfs"] = float("nan")
+            out[f"spr_mean_frac_window_days_above_{thr_i}cfs"] = float("nan")
         return out
 
     # Curve matching diagnostics (San Juan mainstem release only)
@@ -785,7 +785,7 @@ def _metric_spring_peak_release(
     err = rel - target
     out["spr_curve_mean_abs_error_cfs"] = float(err.abs()[spr_mask].mean())
     out["spr_curve_mean_error_cfs"] = float(err[spr_mask].mean())
-    out["spr_curve_pct_days_within_500cfs"] = float((err.abs()[spr_mask] <= float(curve_tolerance_cfs)).mean())
+    out["spr_curve_frac_days_within_500cfs"] = float((err.abs()[spr_mask] <= float(curve_tolerance_cfs)).mean())
 
     # Farmington proxy for threshold-based targets
     animas = df[animas_col].astype(float)
@@ -823,7 +823,7 @@ def _metric_spring_peak_release(
             out[f"spr_target_frequency_{thr_i}cfs_{dur_i}d"] = float(target_freq)
             out[f"spr_overachievement_{thr_i}cfs_{dur_i}d"] = float("nan")
             out[f"spr_mean_max_consec_days_{thr_i}cfs"] = float("nan")
-            out[f"spr_mean_pct_window_days_above_{thr_i}cfs"] = float("nan")
+            out[f"spr_mean_frac_window_days_above_{thr_i}cfs"] = float("nan")
             continue
 
         achieved = float(np.mean(met_flags))
@@ -831,7 +831,7 @@ def _metric_spring_peak_release(
         out[f"spr_target_frequency_{thr_i}cfs_{dur_i}d"] = float(target_freq)
         out[f"spr_overachievement_{thr_i}cfs_{dur_i}d"] = achieved - float(target_freq)
         out[f"spr_mean_max_consec_days_{thr_i}cfs"] = float(np.mean(max_runs))
-        out[f"spr_mean_pct_window_days_above_{thr_i}cfs"] = float(np.mean(pct_days_above))
+        out[f"spr_mean_frac_window_days_above_{thr_i}cfs"] = float(np.mean(pct_days_above))
 
     return out
 
@@ -848,11 +848,11 @@ METRIC_REGISTRY: dict[str, MetricSpec] = {
     "reward_components_summary": MetricSpec(func=_metric_reward_components_summary, requires=()),
 
     # Objective-aligned summary metrics
-    "dam_safety": MetricSpec(func=_metric_dam_safety_pct_days_within_storage_bounds, requires=()),
-    "esa_min_flow": MetricSpec(func=_metric_esa_min_flow_pct_days_met, requires=()),
-    "flooding": MetricSpec(func=_metric_flooding_pct_days_met, requires=()),
+    "dam_safety": MetricSpec(func=_metric_dam_safety_frac_days_within_storage_bounds, requires=()),
+    "esa_min_flow": MetricSpec(func=_metric_esa_min_flow_frac_days_met, requires=()),
+    "flooding": MetricSpec(func=_metric_flooding_frac_days_met, requires=()),
     "spring_peak_release": MetricSpec(func=_metric_spring_peak_release, requires=("release_sj_main_cfs", "animas_farmington_q_cfs")),
-    "hydropower": MetricSpec(func=_metric_hydropower_pct_of_historic, requires=()),
+    "hydropower": MetricSpec(func=_metric_hydropower_frac_of_historic, requires=()),
     "niip": MetricSpec(func=_metric_niip_delivery_and_volume, requires=()),
 
     # Optional extra objective diagnostics
