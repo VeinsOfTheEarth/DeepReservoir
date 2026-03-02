@@ -19,6 +19,14 @@ m = project_metadata()
 # 1 cfs sustained over a day to acre-feet
 CFS_TO_AF_PER_DAY = 1.98211
 
+# -----------------------------------------------------------------------------
+# Navajo Reservoir physical thresholds (authoritative elevations)
+# -----------------------------------------------------------------------------
+# NOTE: These are enforced in the environment physics (deadpool release blocking
+# and automatic spill). Storage thresholds are derived from the E–S curve.
+NAVAJO_DEADPOOL_ELEV_FT = 5775.0
+NAVAJO_SPILL_ELEV_FT = 6085.0
+
 
 class NavajoReservoirEnv(Env):
     """Navajo Reservoir environment (daily timestep).
@@ -34,9 +42,12 @@ class NavajoReservoirEnv(Env):
         If the agent requests more than the cap, we hard-cap (no proportional rescaling).
 
       - Deadpool constraint (elevation-based):
-          If starting reservoir elevation is at/below deadpool_elev_ft (derived from
-          deadpool_storage_af via the E–S curve; deadpool_storage_af defaults to 500,000 AF),
+          If starting reservoir elevation is at/below NAVAJO_DEADPOOL_ELEV_FT (5775 ft),
           *no releases are physically possible*, so both outlet releases are forced to 0.
+
+      - Spill constraint (elevation-based):
+          If ending reservoir elevation would exceed NAVAJO_SPILL_ELEV_FT (6085 ft),
+          the excess storage is automatically spilled (uncontrolled) to the San Juan mainstem.
 
       - Water-available constraint:
           Even above deadpool, releases cannot exceed the water available that day.
@@ -59,6 +70,8 @@ class NavajoReservoirEnv(Env):
         min_release_cfs: float = 0.0,
         max_release_sj_main_cfs: float = 5000.0,
         max_release_niip_cfs: float = 2500.0,
+        # NOTE: legacy arg retained so callers don't break; it is no longer used
+        # to *define* deadpool. Deadpool is defined by NAVAJO_DEADPOOL_ELEV_FT.
         deadpool_storage_af: float = 500_000.0,
         is_eval: bool = False,
     ):
@@ -84,11 +97,13 @@ class NavajoReservoirEnv(Env):
         self.max_release_sj_main_cfs = float(max_release_sj_main_cfs)
         self.max_release_niip_cfs = float(max_release_niip_cfs)
 
-        # Storage thresholds (raw AF)
-        # - deadpool_storage_af is *physical* (no releases possible below it)
-        # - max_storage_af is informational (spill not modeled here)
-        self.deadpool_storage_af = float(deadpool_storage_af)
-        self.max_storage_af = 1_731_750.0
+        # Deadpool/spill are defined by *elevation*; storage thresholds are derived
+        # from the elevation-storage relationship for convenience/clamping.
+        self.deadpool_elev_ft = float(NAVAJO_DEADPOOL_ELEV_FT)
+        self.spill_elev_ft = float(NAVAJO_SPILL_ELEV_FT)
+
+        # Keep the provided value only as a legacy/debug field (not authoritative).
+        self._deadpool_storage_af_legacy = float(deadpool_storage_af)
 
         # ACTION SPACE: 2 releases in [-1, 1]
         self.action_space = Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
@@ -128,10 +143,26 @@ class NavajoReservoirEnv(Env):
         self.capacity_to_elev = elev_models["capacity_to_elevation"]
         self.elev_to_capacity = elev_models.get("elevation_to_capacity", None)
 
-        # Derive a deadpool elevation threshold from the configured deadpool storage.
-        # The repo does not currently include an authoritative deadpool *elevation* constant;
-        # using the E–S curve keeps the physical rule expressed in the right units.
-        self.deadpool_elev_ft = float(self.capacity_to_elev(self.deadpool_storage_af))
+        # Ensure we have elevation -> capacity for spill clamping.
+        if self.elev_to_capacity is None:
+            # Build a numerical inverse from capacity->elevation as a last resort.
+            # This is robust and keeps the environment runnable even if the pickle
+            # only contains capacity->elevation.
+            caps = np.linspace(0.0, 2_000_000.0, 20001)
+            elevs = np.asarray(self.capacity_to_elev(caps), dtype=float)
+            order = np.argsort(elevs)
+            elevs_sorted = elevs[order]
+            caps_sorted = caps[order]
+
+            def _elev_to_capacity(elev_ft):
+                elev_arr = np.asarray(elev_ft, dtype=float)
+                return np.interp(elev_arr, elevs_sorted, caps_sorted)
+
+            self.elev_to_capacity = _elev_to_capacity
+
+        # Storage thresholds derived from the E–S curve (useful for clamping/debug).
+        self.deadpool_storage_af = float(self.elev_to_capacity(self.deadpool_elev_ft))
+        self.max_storage_af = float(self.elev_to_capacity(self.spill_elev_ft))
 
         # --- SPR Opportunity Index precompute ---
         pm = project_metadata()
@@ -378,6 +409,7 @@ class NavajoReservoirEnv(Env):
             "max_release_niip_cfs": float(self.max_release_niip_cfs),
             "deadpool_storage_af": float(self.deadpool_storage_af),
             "deadpool_elev_ft": float(self.deadpool_elev_ft),
+            "spill_elev_ft": float(self.spill_elev_ft),
             "deadpool_block": bool(deadpool_block),
             "elev_ft": float(new_elev_ft),
             "sj_at_farmington_cfs": float(sj_at_farm_cfs),

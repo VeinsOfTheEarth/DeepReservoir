@@ -153,7 +153,8 @@ HIST_FILL = "#E5E7EB"  # pale slate fill
 
 # Historic should be visually distinct from Agent via *style* as well as color.
 # Use a dotted line (not chunky dashes).
-HIST_LINESTYLE = (0, (1.0, 2.2))
+HIST_LINESTYLE = (0, (1.0, 1.0))
+# HIST_LINESTYLE = ':'
 
 # Asymmetric opacity (but keep both fairly opaque)
 ALPHA_AGENT_LINE = 0.98
@@ -186,8 +187,8 @@ FALLBACK_COLORS = [
 ]
 
 # Visual hierarchy
-LW_PRIMARY = 1.9
-LW_SECONDARY = 1.35
+LW_PRIMARY = 1.5
+LW_SECONDARY = 1.25
 LW_TERTIARY = 1.0
 
 ALPHA_RANGE = 0.06

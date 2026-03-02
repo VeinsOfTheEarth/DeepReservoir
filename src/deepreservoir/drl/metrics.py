@@ -31,6 +31,7 @@ from typing import Callable, Mapping, Sequence
 import json
 import numpy as np
 import pandas as pd
+from deepreservoir.define_env.spring_peak_release_curve import SpringPeakReleaseCurve
 
 
 _CFS_DAY_TO_ACRE_FEET = 86400.0 / 43560.0  # 1 cfs sustained for 1 day -> acre-feet
@@ -70,6 +71,34 @@ METRIC_DEFINITIONS: dict[str, str] = {
     # --- Flooding ---
     "flooding_pct_days_met": (
         "Fraction of days flooding constraints are satisfied: sj_at_farmington_cfs < 5000 AND (sj_at_farmington_lag2_cfs is NaN OR < 12000)."
+    ),
+
+
+    # --- ESA spring peak release (SPR) ---
+    "spr_curve_mean_abs_error_cfs": (
+        "Mean absolute error between agent San Juan mainstem release and the SPR target curve, computed over SPR-window days only (cfs)."
+    ),
+    "spr_curve_mean_error_cfs": (
+        "Mean signed error (agent - target) for San Juan mainstem release vs the SPR target curve over SPR-window days (cfs). Positive means over-release."
+    ),
+    "spr_curve_pct_days_within_500cfs": (
+        "Fraction of SPR-window days where |agent mainstem release - target curve| <= 500 cfs."
+    ),
+    "spr_freq_years_meeting_*": (
+        "Pattern: spr_freq_years_meeting_<thr>cfs_<dur>d = fraction of water years where the Farmington proxy "
+        "(animas_farmington_q_cfs + release_sj_main_cfs) stays >= <thr> for at least <dur> consecutive days during SPR window."
+    ),
+    "spr_target_frequency_*": (
+        "Pattern: spr_target_frequency_<thr>cfs_<dur>d = recommended annual frequency target for that threshold/duration pair."
+    ),
+    "spr_overachievement_*": (
+        "Pattern: spr_overachievement_<thr>cfs_<dur>d = achieved frequency - target frequency (positive = overachieving, negative = underachieving)."
+    ),
+    "spr_mean_max_consec_days_*": (
+        "Pattern: spr_mean_max_consec_days_<thr>cfs = mean across water years of the maximum consecutive-day run >= <thr> during SPR window."
+    ),
+    "spr_mean_pct_window_days_above_*": (
+        "Pattern: spr_mean_pct_window_days_above_<thr>cfs = mean across water years of the fraction of SPR-window days with Farmington proxy >= <thr>."
     ),
 
     # --- Hydropower ---
@@ -681,6 +710,133 @@ def _metric_niip_delivery_and_volume(
     return out
 
 
+
+
+# -----------------------------------------------------------------------------
+# ESA Spring Peak Release (SPR) metrics
+# -----------------------------------------------------------------------------
+
+# Table-style targets derived from the SJRIP "spring peak release" guidance:
+# Each tuple is (threshold_cfs, duration_days, target_frequency_per_year).
+_SPR_THRESHOLD_SPECS: tuple[tuple[float, int, float], ...] = (
+    (10_000.0, 5, 0.20),
+    (8_000.0, 19, 0.33),
+    (5_000.0, 20, 0.50),
+    (2_500.0, 10, 0.80),
+)
+
+
+def _max_consecutive_true(b: pd.Series) -> int:
+    """Return the maximum run length of consecutive True values in a boolean Series."""
+    b = b.fillna(False).astype(bool)
+    if b.empty or not b.any():
+        return 0
+    grp = (~b).cumsum()  # increments on False -> True runs share a group id
+    return int(b.groupby(grp).sum().max())
+
+
+def _metric_spring_peak_release(
+    df: pd.DataFrame,
+    *,
+    animas_col: str = "animas_farmington_q_cfs",
+    release_col: str = "release_sj_main_cfs",
+    curve_tolerance_cfs: float = 500.0,
+    threshold_specs: Sequence[tuple[float, int, float]] = _SPR_THRESHOLD_SPECS,
+) -> dict[str, float]:
+    """SPR metrics: threshold/duration frequencies + curve-matching summaries.
+
+    - Uses SpringPeakReleaseCurve to define the SPR window (target>0).
+    - Farmington proxy is computed as animas_farmington_q_cfs + release_sj_main_cfs
+      (to avoid any ambiguity with precomputed sj_at_farmington columns).
+    - For each (threshold, duration, target_frequency):
+        * frequency of water years meeting threshold for at least duration consecutive days
+        * over/underachievement relative to target_frequency
+        * mean max consecutive-day run above threshold
+        * mean fraction of SPR-window days above threshold
+    """
+    out: dict[str, float] = {}
+
+    if animas_col not in df.columns or release_col not in df.columns:
+        # Required columns are enforced by registry validation; keep safe here too.
+        return out
+
+    curve = SpringPeakReleaseCurve()
+    target = curve.targets_for_date_index(df.index).astype(float)
+    spr_mask = target > 0.0
+
+    # If the rollout doesn't cover the SPR window at all, emit NaNs so downstream
+    # aggregation doesn't silently treat "0 days" as success/failure.
+    if not bool(spr_mask.any()):
+        out["spr_curve_mean_abs_error_cfs"] = float("nan")
+        out["spr_curve_mean_error_cfs"] = float("nan")
+        out["spr_curve_pct_days_within_500cfs"] = float("nan")
+        for thr, dur, tf in threshold_specs:
+            thr_i = int(thr)
+            dur_i = int(dur)
+            out[f"spr_freq_years_meeting_{thr_i}cfs_{dur_i}d"] = float("nan")
+            out[f"spr_target_frequency_{thr_i}cfs_{dur_i}d"] = float(tf)
+            out[f"spr_overachievement_{thr_i}cfs_{dur_i}d"] = float("nan")
+            out[f"spr_mean_max_consec_days_{thr_i}cfs"] = float("nan")
+            out[f"spr_mean_pct_window_days_above_{thr_i}cfs"] = float("nan")
+        return out
+
+    # Curve matching diagnostics (San Juan mainstem release only)
+    rel = df[release_col].astype(float)
+    err = rel - target
+    out["spr_curve_mean_abs_error_cfs"] = float(err.abs()[spr_mask].mean())
+    out["spr_curve_mean_error_cfs"] = float(err[spr_mask].mean())
+    out["spr_curve_pct_days_within_500cfs"] = float((err.abs()[spr_mask] <= float(curve_tolerance_cfs)).mean())
+
+    # Farmington proxy for threshold-based targets
+    animas = df[animas_col].astype(float)
+    farm = animas + rel
+
+    # Group by water year (Oct 1 start); SPR window is entirely within a WY.
+    idx = df.index
+    wy = idx.year + (idx.month >= 10).astype(int)
+    wy_series = pd.Series(wy, index=idx, name="wy")
+
+    for thr, dur_days, target_freq in threshold_specs:
+        thr_i = int(thr)
+        dur_i = int(dur_days)
+
+        met_flags: list[bool] = []
+        max_runs: list[int] = []
+        pct_days_above: list[float] = []
+
+        for wy_val, g_idx in wy_series.groupby(wy_series).groups.items():
+            g_idx = pd.DatetimeIndex(g_idx)
+            g_spr = spr_mask.loc[g_idx]
+            spr_days = int(g_spr.sum())
+            if spr_days <= 0:
+                continue
+
+            b = g_spr & (farm.loc[g_idx] >= float(thr))
+            max_run = _max_consecutive_true(b)
+
+            met_flags.append(bool(max_run >= int(dur_days)))
+            max_runs.append(int(max_run))
+            pct_days_above.append(float(b.sum()) / float(spr_days))
+
+        if not met_flags:
+            out[f"spr_freq_years_meeting_{thr_i}cfs_{dur_i}d"] = float("nan")
+            out[f"spr_target_frequency_{thr_i}cfs_{dur_i}d"] = float(target_freq)
+            out[f"spr_overachievement_{thr_i}cfs_{dur_i}d"] = float("nan")
+            out[f"spr_mean_max_consec_days_{thr_i}cfs"] = float("nan")
+            out[f"spr_mean_pct_window_days_above_{thr_i}cfs"] = float("nan")
+            continue
+
+        achieved = float(np.mean(met_flags))
+        out[f"spr_freq_years_meeting_{thr_i}cfs_{dur_i}d"] = achieved
+        out[f"spr_target_frequency_{thr_i}cfs_{dur_i}d"] = float(target_freq)
+        out[f"spr_overachievement_{thr_i}cfs_{dur_i}d"] = achieved - float(target_freq)
+        out[f"spr_mean_max_consec_days_{thr_i}cfs"] = float(np.mean(max_runs))
+        out[f"spr_mean_pct_window_days_above_{thr_i}cfs"] = float(np.mean(pct_days_above))
+
+    return out
+
+
+
 # -----------------------------------------------------------------------------
 # Registry + groups
 # -----------------------------------------------------------------------------
@@ -695,6 +851,7 @@ METRIC_REGISTRY: dict[str, MetricSpec] = {
     "dam_safety": MetricSpec(func=_metric_dam_safety_pct_days_within_storage_bounds, requires=()),
     "esa_min_flow": MetricSpec(func=_metric_esa_min_flow_pct_days_met, requires=()),
     "flooding": MetricSpec(func=_metric_flooding_pct_days_met, requires=()),
+    "spring_peak_release": MetricSpec(func=_metric_spring_peak_release, requires=("release_sj_main_cfs", "animas_farmington_q_cfs")),
     "hydropower": MetricSpec(func=_metric_hydropower_pct_of_historic, requires=()),
     "niip": MetricSpec(func=_metric_niip_delivery_and_volume, requires=()),
 
@@ -714,11 +871,13 @@ METRIC_GROUPS: dict[str, tuple[str, ...]] = {
         "dam_safety",
         "esa_min_flow",
         "flooding",
+        "spring_peak_release",
         "hydropower",
         "niip",
     ),
     "rewards": ("rewards_summary", "reward_components_summary"),
-    "objectives": ("dam_safety", "esa_min_flow", "flooding", "hydropower", "niip"),
+    "objectives": ("dam_safety", "esa_min_flow", "flooding", "spring_peak_release", "hydropower", "niip"),
     "dam_safety_detail": ("dam_safety_detail",),
     "actions": ("action_saturation", "release_constraint_binding"),
+    "spr": ("spring_peak_release",),
 }
