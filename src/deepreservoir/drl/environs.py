@@ -287,7 +287,7 @@ class NavajoReservoirEnv(Env):
         # Elevation + hydropower
         new_elev_ft = float(self.capacity_to_elev(new_storage_af))
         hydropower_mwh = navajo_power_generation_model(
-            cfs_values=float(rel1_cfs),  # component #2 drives power (Colab-style)
+            cfs_values=float(rel0_cfs),  # component #2 drives power (Colab-style)
             elevation_ft=float(new_elev_ft),
         )
 
