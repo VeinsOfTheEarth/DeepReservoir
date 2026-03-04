@@ -265,10 +265,10 @@ def run_test_rollout(
             if col in date_row.index:
                 rec[col] = float(date_row[col])
 
-        # Hydropower: agent uses component #2 similar to original code(if present)
-        if "release_comp2_cfs" in rec:
+        # Hydropower: agent uses component #1 similar to original code(if present)
+        if "release_comp1_cfs" in rec:
             hp_agent = navajo_power_generation_model(
-                cfs_values=float(rec["release_comp2_cfs"]),
+                cfs_values=float(rec["release_comp1_cfs"]),
                 elevation_ft=elev_agent_ft,
             )
             rec["hydro_agent_mwh"] = float(hp_agent)
