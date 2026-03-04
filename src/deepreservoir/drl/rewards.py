@@ -276,11 +276,9 @@ def niip_colab_like(ctx: RewardContext) -> float:
     if demand_cfs <= 0.0 or _NIIP_TOTAL_CFS_SUM <= 0.0:
         return 0.0
 
-    
-    # regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
-    regular_release_cfs = float(ctx.info["sanjuan_release_cfs"])
+    niip_release_cfs = float(ctx.info["niip_release_cfs"])
 
-    delta = demand_cfs - regular_release_cfs
+    delta = demand_cfs - niip_release_cfs
     r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
 
     # return float(np.clip(r, -1.0, 1.0))
