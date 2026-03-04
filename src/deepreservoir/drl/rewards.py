@@ -282,7 +282,7 @@ def niip_colab_like(ctx: RewardContext) -> float:
     r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
 
     # return float(np.clip(r, -1.0, 1.0))
-    return float(r)
+    return 5*float(r)
 
 
 # ---------------- Physics penalties ----------------
