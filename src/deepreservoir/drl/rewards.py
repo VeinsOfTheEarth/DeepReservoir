@@ -318,11 +318,11 @@ def niip_colab_band(ctx: RewardContext) -> float:
     daily_release_af = niip_release_cfs * CFS_TO_AF_PER_DAY
 
     if daily_release_af > (1.05 * daily_demand_af):
-        return -0.5
+        return -2.5
     elif (0.95 * daily_demand_af) <= daily_release_af <= (1.05 * daily_demand_af):
-        return 5.5
+        return 10.5
     else:
-        return -0.5
+        return -2.5
 
 # ---------------- Physics penalties ----------------
 
