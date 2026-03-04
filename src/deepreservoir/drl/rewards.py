@@ -228,7 +228,7 @@ def hydropower_baseline(ctx: RewardContext) -> float:
 
     if hydropower_mwh < min_mwh:
         return -0.5
-    return float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
+    return 3*float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
 
 
 # ---------------- NIIP ----------------
@@ -282,7 +282,7 @@ def niip_colab_like(ctx: RewardContext) -> float:
     r = 1.0 - abs(delta) / (_NIIP_TOTAL_CFS_SUM + 1e-9)
 
     # return float(np.clip(r, -1.0, 1.0))
-    return 5*float(r)
+    return float(r)
 
 @register_reward("niip", "colab_band")
 def niip_colab_band(ctx: RewardContext) -> float:
