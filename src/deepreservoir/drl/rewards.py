@@ -176,7 +176,7 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     x = (storage - target) / span
     r = 1.0 - x**2
     r = float(np.clip(r, -1.0, 1.0))
-    return 5.0 * r
+    return 2.0 * r
 
 
 @register_reward("esa_min_flow", "baseline")
@@ -228,7 +228,7 @@ def hydropower_baseline(ctx: RewardContext) -> float:
 
     if hydropower_mwh < min_mwh:
         return -0.5
-    return 1.5*float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
+    return float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
 
 
 # ---------------- NIIP ----------------
