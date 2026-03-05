@@ -67,6 +67,9 @@ class NavajoReservoirEnv(Env):
         norm_stats: pd.DataFrame,
         reward_fn,
         episode_length: int | None = None,
+        # Optional: restrict training to one or more allowed index segments.
+        # Each tuple is (start_idx, end_idx) inclusive in the provided dataframes.
+        allowed_segments: list[tuple[int, int]] | None = None,
         min_release_cfs: float = 0.0,
         max_release_sj_main_cfs: float = 5000.0,
         max_release_niip_cfs: float = 2500.0,
@@ -91,6 +94,25 @@ class NavajoReservoirEnv(Env):
         self.episode_length = (
             int(episode_length) if episode_length is not None else self.n_steps
         )
+
+        # Optional allowed segments for training (used to avoid "smashing" across
+        # excluded gaps while still allowing multiple disjoint periods).
+        self.allowed_segments: list[tuple[int, int]] | None = None
+        if allowed_segments is not None:
+            segs: list[tuple[int, int]] = []
+            for a, b in allowed_segments:
+                i0 = int(a)
+                i1 = int(b)
+                if i1 < i0:
+                    raise ValueError(f"allowed_segments contains inverted range: {(a, b)}")
+                if i0 < 0 or i1 >= self.n_steps:
+                    raise ValueError(
+                        f"allowed_segments range {(a, b)} falls outside data bounds [0, {self.n_steps-1}]."
+                    )
+                segs.append((i0, i1))
+            # Sort for determinism
+            segs = sorted(segs, key=lambda x: x[0])
+            self.allowed_segments = segs
 
         # Release limits (per-outlet) in cfs
         self.min_release_cfs = float(min_release_cfs)
@@ -188,6 +210,9 @@ class NavajoReservoirEnv(Env):
         # Internal state
         self.t = 0
         self.start_idx = 0
+        self._segment_start_idx = 0
+        self._segment_end_idx = self.n_steps - 1
+        self._episode_end_idx = self.n_steps - 1
         self.storage_af: float | None = None
         self.episode_step_count = 0
 
@@ -238,11 +263,66 @@ class NavajoReservoirEnv(Env):
 
         if self.is_eval:
             self.start_idx = 0
+            self._segment_start_idx = 0
+            self._segment_end_idx = self.n_steps - 1
+            self._episode_end_idx = self.n_steps - 1
             self.max_steps = self.n_steps
         else:
-            max_start = max(self.n_steps - self.episode_length, 0)
-            self.start_idx = int(self.np_random.integers(0, max_start + 1))
-            self.max_steps = self.episode_length
+            # Choose an episode start inside allowed segments (if provided).
+            if self.allowed_segments is not None:
+                segs = self.allowed_segments
+                # Weight segments by available start positions.
+                weights = []
+                for s0, s1 in segs:
+                    seg_len = int(s1 - s0 + 1)
+                    # Number of feasible episode starts in this segment.
+                    # Prefer starts that can accommodate a full-length episode when possible.
+                    if seg_len > self.episode_length:
+                        n_starts = seg_len - self.episode_length + 1
+                    else:
+                        # Require at least 2 days so step() can advance once.
+                        n_starts = seg_len - 1
+                    weights.append(max(int(n_starts), 0))
+
+                total_w = int(sum(weights))
+                if total_w <= 0:
+                    raise ValueError(
+                        "allowed_segments do not contain any segment with length >= 2; cannot sample episode starts."
+                    )
+
+                r = int(self.np_random.integers(0, total_w))
+                acc = 0
+                chosen = 0
+                for i, w in enumerate(weights):
+                    acc += int(w)
+                    if r < acc:
+                        chosen = i
+                        break
+
+                seg_start, seg_end = segs[chosen]
+                self._segment_start_idx = int(seg_start)
+                self._segment_end_idx = int(seg_end)
+
+                seg_len = int(seg_end - seg_start + 1)
+                # Prefer full-length episodes when possible.
+                if seg_len > self.episode_length:
+                    start_min = int(seg_start)
+                    start_max = int(seg_end - self.episode_length)
+                else:
+                    start_min = int(seg_start)
+                    start_max = int(seg_end - 1)
+
+                self.start_idx = int(self.np_random.integers(start_min, start_max + 1))
+                self._episode_end_idx = int(min(self.start_idx + self.episode_length - 1, seg_end))
+                self.max_steps = int(self._episode_end_idx - self.start_idx + 1)
+            else:
+                # Original behavior: sample a contiguous episode within the provided dataframe.
+                max_start = max(self.n_steps - self.episode_length, 0)
+                self.start_idx = int(self.np_random.integers(0, max_start + 1))
+                self._segment_start_idx = 0
+                self._segment_end_idx = self.n_steps - 1
+                self._episode_end_idx = int(min(self.start_idx + self.episode_length - 1, self.n_steps - 1))
+                self.max_steps = int(self._episode_end_idx - self.start_idx + 1)
 
         self.t = 0
         self.episode_step_count = 0
@@ -434,12 +514,12 @@ class NavajoReservoirEnv(Env):
         self.episode_step_count += 1
 
         global_idx_next = self._current_global_idx()
-        done = (global_idx_next >= self.n_steps) or (
-            self.episode_step_count >= self.episode_length
-        )
+        done = bool(global_idx_next > int(self._episode_end_idx) or global_idx_next >= self.n_steps)
 
-        terminated = bool(done)
-        truncated = False
+        # Gymnasium semantics: we treat end-of-data as "terminated"; time limits and
+        # segment boundaries as "truncated".
+        terminated = bool(global_idx_next >= self.n_steps)
+        truncated = bool(done and not terminated)
 
         next_obs = self._build_obs() if not done else np.zeros_like(obs, dtype=np.float32)
 

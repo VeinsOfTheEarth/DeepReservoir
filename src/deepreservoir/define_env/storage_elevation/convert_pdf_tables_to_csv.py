@@ -64,4 +64,4 @@ area_df.sort_values(by='Elevation (ft)', inplace=True)
 
 ## Combine into single dataframe and save
 df = capacity_df.merge(area_df, on='Elevation (ft)')
-df.to_csv(DataPaths.elev_area_storage_csv')
+df.to_csv(DataPaths.elev_area_storage_csv, index=False)
