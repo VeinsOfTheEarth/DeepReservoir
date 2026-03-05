@@ -176,7 +176,7 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     x = (storage - target) / span
     r = 1.0 - x**2
     r = float(np.clip(r, -1.0, 1.0))
-    return 2.0 * r
+    return 3.0 * r
 
 
 @register_reward("esa_min_flow", "baseline")
