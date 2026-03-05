@@ -228,7 +228,7 @@ def hydropower_baseline(ctx: RewardContext) -> float:
 
     if hydropower_mwh < min_mwh:
         return -0.5
-    return 3*float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
+    return 1.5*float((hydropower_mwh - min_mwh) / (max_mwh - min_mwh))
 
 
 # ---------------- NIIP ----------------
