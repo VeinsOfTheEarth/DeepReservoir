@@ -21,7 +21,8 @@ except Exception:
     demand_cfs = np.array([float(niip_daily_demand(d)) for d in doys], dtype=float)
 
 # 3) Convert to AF/day
-CFS_TO_AF_PER_DAY = 1.98211
+# 1 cfs sustained over 1 day -> acre-feet
+CFS_TO_AF_PER_DAY = 86400.0 / 43560.0
 demand_af = demand_cfs * CFS_TO_AF_PER_DAY
 
 # 4) Save CSV

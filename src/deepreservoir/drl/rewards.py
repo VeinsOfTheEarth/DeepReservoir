@@ -56,7 +56,7 @@ OBJECTIVES = [
     "flooding",
     "hydropower",
     "niip",
-    "physics",
+    # "physics",
 ]
 
 REWARD_REGISTRY: Dict[str, Dict[str, RewardFn]] = {obj: {} for obj in OBJECTIVES}
@@ -259,7 +259,7 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     x = (storage - target) / span
     r = 1.0 - x**2
     r = float(np.clip(r, -1.0, 1.0))
-    return 1.0 * r
+    return r
 
 @register_reward("dam_safety", "storage_band_shaped")
 def dam_safety_storage_band(ctx: RewardContext) -> float:
@@ -278,6 +278,48 @@ def dam_safety_storage_band(ctx: RewardContext) -> float:
     x = (storage - target) / span
     r = 1.0 - x**2
     return r
+
+
+@register_reward("dam_safety", "storage_band_env")
+def dam_safety_storage_band_env(ctx: RewardContext) -> float:
+    """Storage-band shaping using environment-provided bounds.
+
+    Uses deadpool_storage_af and max_storage_af from ctx.info (set by the env).
+    This keeps the reward consistent with elevation-based spill/deadpool changes.
+    """
+    storage = float(ctx.info["storage_af"])
+    s_min = float(ctx.info.get("deadpool_storage_af", 0.0))
+    s_max = float(ctx.info.get("max_storage_af", 1.0))
+    # Defensive clamps (interpolators may extrapolate slightly negative).
+    if s_min < 0.0:
+        s_min = 0.0
+    if s_max <= s_min:
+        return 0.0
+
+    target = 0.5 * (s_min + s_max)
+    span = (s_max - s_min) / 2.0
+    x = (storage - target) / span
+    r = 1.0 - x**2
+    return float(np.clip(r, -1.0, 1.0))
+
+
+@register_reward("dam_safety", "storage_fraction")
+def dam_safety_storage_fraction(ctx: RewardContext) -> float:
+    """Monotonic storage reward in [0, 1] using env bounds.
+
+    0 at/below deadpool_storage_af, 1 at/above max_storage_af.
+    Useful when you simply want the agent to retain water.
+    """
+    storage = float(ctx.info["storage_af"])
+    s_min = float(ctx.info.get("deadpool_storage_af", 0.0))
+    s_max = float(ctx.info.get("max_storage_af", 1.0))
+    if s_min < 0.0:
+        s_min = 0.0
+    if s_max <= s_min:
+        return 0.0
+
+    frac = (storage - s_min) / (s_max - s_min)
+    return float(np.clip(frac, 0.0, 1.0))
 
 
 @register_reward("esa_min_flow", "baseline")
@@ -385,24 +427,6 @@ def niip_colab_like(ctx: RewardContext) -> float:
 
     
     return float(np.clip(r, -1.0, 1.0))
-
-
-# ---------------- Physics penalties ----------------
-
-@register_reward("physics", "baseline")
-def physics_penalty(ctx: RewardContext) -> float:
-    """
-    Penalize asking for infeasible releases.
-
-    Matches your final environs.py keys:
-      - release_cap_penalty : how much the request exceeded operational cap
-      - release_phys_penalty: how much it exceeded physical available water
-    """
-    cap = float(ctx.info.get("release_cap_penalty", 0.0))
-    phys = float(ctx.info.get("release_phys_penalty", 0.0))
-    r = cap + phys
-    return r
-
 
 # ---------------- SPR rewards ----------------
 

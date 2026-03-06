@@ -32,15 +32,15 @@ from deepreservoir.drl.model import DRLModel, evaluate_model_window
 # CONFIG
 # -----------------------------------------------------------------------------
 
-RUN_DIR = Path("runs/scratch_demo_train_to_2010_eval_2011_end")
+RUN_DIR = Path("runs/fixed_deadpool_alpha_2")
 START_FRESH = True  # set False if you want to manually resume instead
 
 REWARD_SPEC = (
-    "dam_safety:storage_band_shaped@2.0,"
-    "esa_min_flow:baseline,"
-    "flooding:baseline@1.0,"
-    "hydropower:baseline@1.0,"
-    "niip:baseline@1.0,"
+    "dam_safety:storage_fraction@2.0,"
+    # "esa_min_flow:baseline,"
+    # "flooding:baseline@1.0,"
+    # "hydropower:baseline@1.0,"
+    # "niip:baseline@1.0,"
 )
 
 # --- Training window: start-of-record -> WY 2010 ---
@@ -113,8 +113,6 @@ m = DRLModel(
 print(f"[scratch] RUN_DIR = {RUN_DIR.resolve()}")
 print(f"[scratch] Train window: start-of-record -> {TRAIN_END} (WY)")
 
-
-# %%
 # -----------------------------------------------------------------------------
 # 2) Train #1 (fresh)
 # -----------------------------------------------------------------------------
@@ -164,44 +162,44 @@ _, df_metrics = evaluate_model_window(
 print("\n[scratch] eval metrics:\n" + df_metrics.to_string(index=False))
 
 
-# %%
-# -----------------------------------------------------------------------------
-# 4) Train #2 (resume): +500_000 timesteps
-# -----------------------------------------------------------------------------
+# # %%
+# # -----------------------------------------------------------------------------
+# # 4) Train #2 (resume): +500_000 timesteps
+# # -----------------------------------------------------------------------------
 
-print(f"[scratch] Training #2 (resume) for +{TIMESTEPS_TRAIN_2:,} timesteps")
+# print(f"[scratch] Training #2 (resume) for +{TIMESTEPS_TRAIN_2:,} timesteps")
 
-# New DRLModel instance to demonstrate the intended resume workflow.
-# (Same config, then load weights+optimizer state.)
-m2 = DRLModel(
-    reward_spec=REWARD_SPEC,
-    use_full_record=USE_FULL_RECORD,
-    n_years_train=N_YEARS_TRAIN,
-    train_start=TRAIN_START,
-    train_end=TRAIN_END,
-    exclude_start=EXCLUDE_START,
-    exclude_end=EXCLUDE_END,
-    val_start=VAL_START,
-    val_end=VAL_END,
-    logdir=RUN_DIR,
-    seed=SEED,
-    device=DEVICE,
-    n_envs=N_ENVS,
-    use_subproc_vec=False,
-    episode_length_train=EPISODE_LENGTH_TRAIN,
-)
+# # New DRLModel instance to demonstrate the intended resume workflow.
+# # (Same config, then load weights+optimizer state.)
+# m2 = DRLModel(
+#     reward_spec=REWARD_SPEC,
+#     use_full_record=USE_FULL_RECORD,
+#     n_years_train=N_YEARS_TRAIN,
+#     train_start=TRAIN_START,
+#     train_end=TRAIN_END,
+#     exclude_start=EXCLUDE_START,
+#     exclude_end=EXCLUDE_END,
+#     val_start=VAL_START,
+#     val_end=VAL_END,
+#     logdir=RUN_DIR,
+#     seed=SEED,
+#     device=DEVICE,
+#     n_envs=N_ENVS,
+#     use_subproc_vec=False,
+#     episode_length_train=EPISODE_LENGTH_TRAIN,
+# )
 
-m2.load_model(str(model_path))
+# m2.load_model(str(model_path))
 
-m2.train(
-    total_timesteps=int(TIMESTEPS_TRAIN_2),
-    val_freq=(VAL_FREQ if (VAL_START is not None and VAL_END is not None) else None),
-    n_steps=N_STEPS,
-    batch_size=BATCH_SIZE,
-    n_epochs=N_EPOCHS,
-    gamma=GAMMA,
-    track_reward_components=True,
-    resume=True,
-)
+# m2.train(
+#     total_timesteps=int(TIMESTEPS_TRAIN_2),
+#     val_freq=(VAL_FREQ if (VAL_START is not None and VAL_END is not None) else None),
+#     n_steps=N_STEPS,
+#     batch_size=BATCH_SIZE,
+#     n_epochs=N_EPOCHS,
+#     gamma=GAMMA,
+#     track_reward_components=True,
+#     resume=True,
+# )
 
-print(f"[scratch] Done training #2. Updated model saved to: {model_path}")
+# print(f"[scratch] Done training #2. Updated model saved to: {model_path}")

@@ -16,8 +16,13 @@ from deepreservoir.define_env.spring_peak_release.opportunity_index import (
 
 m = project_metadata()
 
-# 1 cfs sustained over a day to acre-feet
-CFS_TO_AF_PER_DAY = 1.98211
+# Unit conversions (daily timestep)
+# 1 cfs sustained over 1 day -> acre-feet
+#   1 acre-foot = 43,560 ft^3
+#   1 day       = 86,400 s
+#   1 cfs-day   = 86,400 ft^3 = 86,400 / 43,560 acre-feet
+CFS_TO_AF_PER_DAY = 86400.0 / 43560.0
+AF_PER_DAY_TO_CFS = 1.0 / CFS_TO_AF_PER_DAY
 
 # -----------------------------------------------------------------------------
 # Navajo Reservoir physical thresholds (authoritative elevations)
@@ -394,18 +399,23 @@ class NavajoReservoirEnv(Env):
         total_cfs = float(release_sj_main_cfs + release_niip_cfs)
 
         # --- Physical feasibility (water available) ---
+        # IMPORTANT: The reservoir state is volume (acre-feet). We enforce the
+        # feasibility constraint in *volume space* to avoid extra AF<->CFS
+        # round-tripping and to make the mass balance more explicit.
         row_raw = self.data_raw.iloc[global_idx]
         inflow_cfs = float(row_raw["inflow_cfs"])
         inflow_af = inflow_cfs * CFS_TO_AF_PER_DAY
         evap_af = float(row_raw["evap_af"])
 
         available_af = max(float(self.storage_af) + inflow_af - evap_af, 0.0)
-        max_total_cfs_phys = available_af / CFS_TO_AF_PER_DAY
+        requested_total_af = float(total_cfs) * CFS_TO_AF_PER_DAY
 
         phys_penalty = 0.0
-        if total_cfs > max_total_cfs_phys:
+        if requested_total_af > available_af:
+            # Scale controlled releases proportionally to satisfy mass balance.
+            # (Ratio is identical in cfs or af/day because the timestep is fixed.)
             pre_phys_total = float(total_cfs)
-            scale = max_total_cfs_phys / (total_cfs + 1e-9)
+            scale = float(available_af) / (requested_total_af + 1e-9)
             release_sj_main_cfs *= scale
             release_niip_cfs *= scale
             total_cfs = float(release_sj_main_cfs + release_niip_cfs)
@@ -427,7 +437,7 @@ class NavajoReservoirEnv(Env):
         spill_cfs = 0.0
         if new_storage_af > float(self.max_storage_af):
             spill_af = float(new_storage_af - float(self.max_storage_af))
-            spill_cfs = float(spill_af / CFS_TO_AF_PER_DAY)
+            spill_cfs = float(spill_af * AF_PER_DAY_TO_CFS)
             new_storage_af = float(self.max_storage_af)
 
         # Totals including spill (actual outflow at the dam)
@@ -454,6 +464,8 @@ class NavajoReservoirEnv(Env):
 
         # Elevation + hydropower
         new_elev_ft = float(self.capacity_to_elev(new_storage_af))
+        # Hydropower uses *controlled* (turbine) San Juan mainstem release.
+        # Spill is uncontrolled and should not contribute to generation.
         hydropower_mwh = navajo_power_generation_model(
             cfs_values=float(release_sj_main_cfs),
             elevation_ft=float(new_elev_ft),
@@ -472,6 +484,8 @@ class NavajoReservoirEnv(Env):
             "inflow_cfs": float(inflow_cfs),
             "inflow_af": float(inflow_af),
             "evap_af": float(evap_af),
+            "available_af": float(available_af),
+            "requested_total_release_af": float(requested_total_af),
             # Releases (unambiguous names + units)
             "release_sj_main_cfs": float(release_sj_main_cfs),
             "release_niip_cfs": float(release_niip_cfs),

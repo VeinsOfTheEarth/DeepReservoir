@@ -1,117 +1,163 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Nov  7 18:33:18 2024
+Build elevation–area–capacity interpolators and export to a pickle.
 
-Builds elevation-area-storage interpolatable functions.
-Exports a pickled set of parameters.
+Important modeling convention (Navajo):
+  - The supplied 'Capacity' / 'Storage' is **volume above deadpool**.
+  - Deadpool elevation is 5775.0 ft and corresponds to 0.0 acre-feet.
+  - Below 5775.0 ft, capacity is defined as 0.0 (no extrapolated negatives).
+
+This file builds *clamped* linear interpolators so the environment physics is
+numerically stable and consistent at the deadpool boundary:
+  - elevation_to_capacity(elev <= 5775) -> 0.0
+  - capacity_to_elevation(cap <= 0)     -> 5775.0
+
+The resulting pickle is used by `deepreservoir.drl.environs.NavajoReservoirEnv`.
 """
+
+from __future__ import annotations
+
+import pickle
+from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-from sklearn.metrics import r2_score
-import pickle
+
 from deepreservoir.data.metadata import project_metadata
 
-m  = project_metadata()
-path_eas_pickle = m.path("elev_area_storage_data")
-path_eas_csv = m.path('elev_area_storage_pickle')
 
-def linear_interpolator(x, y, nbreaks, plot=True):
-    x = np.asarray(x)
-    y = np.asarray(y)
+DEADPOOL_ELEV_FT = 5775.0
 
-    breakpoints = np.quantile(x, np.linspace(0, 1, nbreaks + 1))
 
-    x_piecewise = []
-    y_piecewise = []
-    for i in range(len(breakpoints) - 1):
-        mask = (x >= breakpoints[i]) & (x < breakpoints[i + 1])
-        if not np.any(mask):
-            continue  # skip empty bin
-        x_piecewise.append(np.mean(x[mask]))
-        y_piecewise.append(np.mean(y[mask]))
+def _first_existing_col(df: pd.DataFrame, candidates: Iterable[str]) -> str:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    raise KeyError(
+        f"None of the candidate columns were found. Candidates={list(candidates)}. "
+        f"Found={list(df.columns)}"
+    )
 
-    x_piecewise = np.asarray(x_piecewise)
-    y_piecewise = np.asarray(y_piecewise)
 
-    piecewise_model = interp1d(
-        x_piecewise,
-        y_piecewise,
+def _dedupe_sorted_xy(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Sort by x and collapse duplicate x via mean(y)."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+
+    # Collapse duplicates (robust to float rounding artifacts)
+    xu, inv = np.unique(x, return_inverse=True)
+    yu = np.zeros_like(xu, dtype=float)
+    counts = np.zeros_like(xu, dtype=float)
+    np.add.at(yu, inv, y)
+    np.add.at(counts, inv, 1.0)
+    yu /= np.maximum(counts, 1.0)
+
+    return xu, yu
+
+
+def _clamped_linear_interp(x: np.ndarray, y: np.ndarray, *, left: float, right: float):
+    """interp1d with constant clamp outside domain (no extrapolation)."""
+    return interp1d(
+        x,
+        y,
         kind="linear",
         bounds_error=False,
-        fill_value="extrapolate",
+        fill_value=(float(left), float(right)),
+        assume_sorted=True,
     )
-    
-    # Generate fitted y values for the actual x values
-    y_fitted = piecewise_model(x)
-    
-    # Compute R-squared value
-    r_squared = r2_score(y, y_fitted)
-    
-    # Compute average percent error
-    percent_errors = np.abs((y - y_fitted) / y) * 100
-    average_percent_error = np.mean(percent_errors)
-    
-    # Print R-squared and average percent error
-    print("R-squared:", r_squared)
-    print("Average Percent Error:", average_percent_error)
-    
-    if plot is True:
-        plt.close('all')
-        # Plot original data and interpolated curve
-        x_fit = np.linspace(x.min(), x.max(), 1000)  # Points for a smooth line
-        y_fit = piecewise_model(x_fit)
-        
-        plt.figure(figsize=(10, 6))
-        plt.plot(x, y, 'o', label="Original Data", markersize=5)
-        plt.plot(x_fit, y_fit, '-', label="Piecewise Linear Interpolation")
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title("Piecewise Linear Interpolation Fit")
-        # Position the legend outside the plot to the right
-        plt.legend(loc="upper left")
-        
-        # Add R-squared and average percent error in the lower-left corner to avoid the legend
-        plt.text(
-            0.75, 0.05, 
-            f"R-squared: {r_squared:.3f}\nAvg. Percent Error: {average_percent_error:.2f}%", 
-            transform=plt.gca().transAxes, 
-            fontsize=10, 
-            verticalalignment='bottom', 
-            bbox=dict(facecolor='white', alpha=0.5)
-        )
-        
-        plt.tight_layout()  # Adjust layout to make room for the legend
+
+
+def build_and_save(*, plot: bool = False) -> Path:
+    m = project_metadata()
+
+    # Correct: csv is a TABLE, pickle is a PARAMETER file.
+    path_eas_csv = Path(m.path("elev_area_storage_data"))
+    path_eas_pickle = Path(m.path("elev_area_storage_pickle"))
+
+    df = pd.read_csv(path_eas_csv)
+
+    # Robust column detection (we have seen minor header variants).
+    elev_col = _first_existing_col(df, ["Elevation (ft)", "Elevation (feet)", "elev_ft"])
+    cap_col = _first_existing_col(df, ["Capacity (ac-ft)", "Capacity (af)", "Capacity (acft)", "capacity_af"])
+    area_col = _first_existing_col(df, ["Area (ac)", "Area (acres)", "area_ac"])
+
+    e = df[elev_col].to_numpy(dtype=float)
+    c = df[cap_col].to_numpy(dtype=float)
+    a = df[area_col].to_numpy(dtype=float)
+
+    # Drop NaNs
+    ok = np.isfinite(e) & np.isfinite(c) & np.isfinite(a)
+    e, c, a = e[ok], c[ok], a[ok]
+
+    # Enforce the deadpool convention at 5775 ft: capacity == 0.
+    # If the table already includes this (it should), this is a no-op.
+    # If the table starts above deadpool, we insert an anchor point.
+    if not np.any(np.isclose(e, DEADPOOL_ELEV_FT)):
+        e = np.append(e, DEADPOOL_ELEV_FT)
+        c = np.append(c, 0.0)
+        # area at deadpool is ambiguous without data; use min area as conservative.
+        a = np.append(a, float(np.nanmin(a)))
+
+    # Ensure no negative capacities in the training table; clamp just in case.
+    c = np.maximum(c, 0.0)
+
+    # Build clamped interpolators in both directions.
+    e_u, c_u = _dedupe_sorted_xy(e, c)
+    e_u2, a_u = _dedupe_sorted_xy(e, a)
+
+    # Elev -> Capacity: clamp below 5775 to 0; clamp above to max.
+    e_to_c = _clamped_linear_interp(e_u, c_u, left=0.0, right=float(np.max(c_u)))
+
+    # Capacity -> Elev: invert using the (monotone) capacity axis.
+    c_u2, e_for_c = _dedupe_sorted_xy(c, e)
+    c_to_e = _clamped_linear_interp(c_u2, e_for_c, left=DEADPOOL_ELEV_FT, right=float(np.max(e_for_c)))
+
+    # Elev -> Area: clamp below to area at deadpool (min elev) and above to max.
+    area_at_deadpool = float(a_u[np.argmin(e_u2)])
+    e_to_a = _clamped_linear_interp(e_u2, a_u, left=area_at_deadpool, right=float(np.max(a_u)))
+
+    # Area -> Elev: invert using area axis (monotone in practice for this table).
+    a_u2, e_for_a = _dedupe_sorted_xy(a, e)
+    a_to_e = _clamped_linear_interp(a_u2, e_for_a, left=float(np.min(e_for_a)), right=float(np.max(e_for_a)))
+
+    # Optional quick plot for sanity (off by default so this works headless).
+    if plot:
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
+        xs = np.linspace(min(e_u), max(e_u), 500)
+        plt.figure()
+        plt.plot(e_u, c_u, ".", ms=2, label="table")
+        plt.plot(xs, e_to_c(xs), "-", label="e->c")
+        plt.axvline(DEADPOOL_ELEV_FT, ls="--")
+        plt.legend()
+        plt.title("Elevation → Capacity (clamped)")
+        plt.xlabel("Elevation (ft)")
+        plt.ylabel("Capacity (ac-ft)")
         plt.show()
-        
-    return piecewise_model
 
-# Load data
-df = pd.read_csv(path_eas_csv)
+    path_eas_pickle.parent.mkdir(parents=True, exist_ok=True)
+    with open(path_eas_pickle, "wb") as f:
+        pickle.dump(
+            {
+                "elevation_to_area": e_to_a,
+                "area_to_elevation": a_to_e,
+                "elevation_to_capacity": e_to_c,
+                "capacity_to_elevation": c_to_e,
+            },
+            f,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
 
-# Extract values from the DataFrame
-e = df["Elevation (ft)"].values
-a = df["Area (ac)"].values
-c = df["Capacity (ac-ft)"].values
+    print(f"Wrote: {path_eas_pickle}")
+    return path_eas_pickle
 
-# Number of pieces
-n = 100
 
-e_to_a = linear_interpolator(e, a, 100)
-a_to_e = linear_interpolator(a, e, 100)
-e_to_c = linear_interpolator(e, c, 100)
-c_to_e = linear_interpolator(c, e, 100)
-
-## Store as pickle
-with open(path_eas_pickle, "wb") as file:
-    pickle.dump(
-        {
-            "elevation_to_area": e_to_a,
-            "area_to_elevation": a_to_e,
-            "elevation_to_capacity": e_to_c,
-            "capacity_to_elevation": c_to_e,
-        },
-        file,
-    )
+if __name__ == "__main__":
+    build_and_save(plot=False)
