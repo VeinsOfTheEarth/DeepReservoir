@@ -38,6 +38,9 @@ from deepreservoir.drl import model
 from deepreservoir.drl import helpers
 
 
+_DEFAULT_RUNS_ROOT = Path(__file__).resolve().parents[3] / "runs"
+
+
 def _sanitize_token(s: str) -> str:
     return s.replace(":", "-").replace("/", "-").replace("\\", "-")
 
@@ -261,6 +264,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_test.add_argument("--no-rollout", action="store_true", help="Skip saving eval rollout parquet/csv.")
     p_test.add_argument("--no-metrics", action="store_true", help="Skip saving eval metrics csv/json.")
 
+    # ------------------------------------------------------------------
+    # report-metrics
+    # ------------------------------------------------------------------
+    p_report = sub.add_parser(
+        "report-metrics",
+        help="Build a presentation-friendly master_metrics.xlsx workbook from eval_metrics.csv files",
+    )
+    p_report.add_argument(
+        "--runs-root",
+        type=str,
+        default=None,
+        help=(
+            "Root directory to scan recursively for eval_metrics.csv files. "
+            f"Default: {_DEFAULT_RUNS_ROOT}"
+        ),
+    )
+    p_report.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output workbook path. Default: <runs_root>/master_metrics.xlsx",
+    )
+    p_report.add_argument(
+        "--metrics-filename",
+        type=str,
+        default="eval_metrics.csv",
+        help="Metrics filename to scan for recursively.",
+    )
+
     return parser
 
 
@@ -455,6 +487,22 @@ def cmd_train(args) -> None:
     )
 
 
+def cmd_report_metrics(args) -> None:
+    from deepreservoir.drl import reporting
+
+    runs_root = Path(args.runs_root) if args.runs_root is not None else _DEFAULT_RUNS_ROOT
+
+    result = reporting.build_master_metrics_workbook(
+        runs_root=runs_root,
+        outpath=args.out,
+        metrics_filename=args.metrics_filename,
+    )
+    print(
+        "[cli] wrote metrics dashboard: "
+        f"{result['outpath']} (evals={result['n_evals']}, experiments={result['n_experiments']})"
+    )
+
+
 def cmd_eval(args) -> None:
     model_path = Path(args.model)
     if not model_path.exists():
@@ -510,6 +558,8 @@ def main(argv=None) -> None:
         cmd_train(args)
     elif args.cmd in ("eval", "test"):
         cmd_eval(args)
+    elif args.cmd == "report-metrics":
+        cmd_report_metrics(args)
     else:
         raise RuntimeError(f"Unknown command: {args.cmd}")
 

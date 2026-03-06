@@ -1006,7 +1006,8 @@ def plot_train_update_mean_rewards(
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Mean reward per step")
-
+    ax.yaxis.set_major_formatter(mticker.StrMethodFormatter("{x:,.3f}"))
+    
     def _color_for_objective(obj_key: str, idx: int) -> str:
         base = obj_key.split(".", 1)[0]
         if base in OBJECTIVE_COLOR_MAP:

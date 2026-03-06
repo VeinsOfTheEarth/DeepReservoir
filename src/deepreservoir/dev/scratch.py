@@ -32,7 +32,7 @@ from deepreservoir.drl.model import DRLModel, evaluate_model_window
 # CONFIG
 # -----------------------------------------------------------------------------
 
-RUN_DIR = Path("runs/fixed_deadpool_alpha_2")
+RUN_DIR = Path("runs/fixed_deadpool_alpha_2_250000")
 START_FRESH = True  # set False if you want to manually resume instead
 
 REWARD_SPEC = (
@@ -63,7 +63,7 @@ EVAL_START: str | None = "2011"
 EVAL_END: str | None = None  # None = end-of-record
 
 # Timesteps
-TIMESTEPS_TRAIN_1 = 100_000
+TIMESTEPS_TRAIN_1 = 250_000
 TIMESTEPS_TRAIN_2 = 500_000
 
 # PPO knobs (safe single-env defaults)

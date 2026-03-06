@@ -20,3 +20,4 @@ dependencies:
   - tensorboard    # training logs/metrics
   - tqdm           # progress bars
   - pip
+  - openpyxl
